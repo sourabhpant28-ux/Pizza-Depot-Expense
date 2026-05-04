@@ -250,7 +250,8 @@ export default function ExpensesPage() {
   const toggleStore = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }
@@ -267,17 +268,23 @@ export default function ExpensesPage() {
     e.preventDefault()
     setError(null)
 
-    if (!title.trim())   return setError('Title is required.')
-    if (total <= 0)      return setError('Total amount must be greater than 0.')
+    if (!title.trim()) {
+      setError('Title is required.')
+      return
+    }
+    if (total <= 0) {
+      setError('Total amount must be greater than 0.')
+      return
+    }
 
     // Validation for non-equal_all modes
     if (allocationMode !== 'equal_all' && selectedIds.size === 0) {
-      return setError('Please select at least one store.')
+      setError('Please select at least one store.')
+      return
     }
     if (allocationMode === 'manual' && !manualBalanced) {
-      return setError(
-        `Manual amounts sum to ${fmt(manualSum)} but total is ${fmt(total)}. They must match.`
-      )
+      setError(`Manual amounts sum to ${fmt(manualSum)} but total is ${fmt(total)}. They must match.`)
+      return
     }
 
     setSaving(true)

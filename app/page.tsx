@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { Expense, MONTHS } from '@/lib/types'
-import { Store, Receipt, TrendingUp, CalendarDays, AlertCircle } from 'lucide-react'
+import { Store, TrendingUp, CalendarDays, AlertCircle } from 'lucide-react'
 
 // ─── Helpers ────────────────────────────────────────────────
 
