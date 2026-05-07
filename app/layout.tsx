@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import Sidebar from '@/components/Sidebar'
+import AppShell from '@/components/AppShell'
 
 export const metadata: Metadata = {
   title: 'Marketing Fund Tracker',
@@ -15,17 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
-        <div className="flex h-screen bg-gray-100">
-
-          {/* Sidebar — fixed on the left */}
-          <Sidebar />
-
-          {/* Main content — scrollable */}
-          <main className="flex-1 overflow-y-auto">
-            {children}
-          </main>
-
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   )

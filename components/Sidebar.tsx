@@ -38,7 +38,7 @@ export default function Sidebar() {
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
   return (
-    <aside className="flex flex-col w-64 min-h-screen bg-gray-950 text-white shrink-0">
+    <aside className="flex flex-col w-64 h-full bg-gray-950 text-white">
 
       {/* Header */}
       <div className="px-6 py-6 border-b border-gray-800">
