@@ -61,6 +61,7 @@ export default async function DashboardPage() {
     .from('stores')
     .select('*')
     .order('name')
+    .limit(1000)
 
   // Fetch all expenses for the current year
   const { data: expenses, error: expensesError } = await supabase

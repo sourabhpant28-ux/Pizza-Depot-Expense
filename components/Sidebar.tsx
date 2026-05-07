@@ -26,10 +26,11 @@ export default function Sidebar() {
   useEffect(() => {
     supabase
       .from('stores')
-      .select('id', { count: 'exact', head: true })
+      .select('id')
       .eq('active', true)
-      .then(({ count, error }) => {
-        if (!error) setActiveCount(count ?? 0)
+      .limit(1000)
+      .then(({ data, error }) => {
+        if (!error) setActiveCount(data?.length ?? 0)
       })
   }, [])
 
