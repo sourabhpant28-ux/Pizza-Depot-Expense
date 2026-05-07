@@ -2,6 +2,9 @@ import { supabase } from '@/lib/supabase'
 import { Expense, MONTHS } from '@/lib/types'
 import { Store, TrendingUp, CalendarDays, AlertCircle } from 'lucide-react'
 
+// Force fresh data on every request — prevents Netlify static caching
+export const dynamic = 'force-dynamic'
+
 // ─── Helpers ────────────────────────────────────────────────
 
 const fmt = (amount: number) =>

@@ -287,6 +287,10 @@ export default function ExpensesPage() {
     e.preventDefault()
     setError(null)
 
+    // Capture editingExpense immediately — reading state inside async
+    // functions after await calls can return stale values in React
+    const currentEditingExpense = editingExpense
+
     if (!title.trim()) {
       setError('Title is required.')
       return
@@ -319,12 +323,12 @@ export default function ExpensesPage() {
 
     let expenseId: string
 
-    if (editingExpense) {
+    if (currentEditingExpense) {
       // ── UPDATE existing expense ────────────────────────
       const { error: updateError } = await supabase
         .from('expenses')
         .update(expensePayload)
-        .eq('id', editingExpense.id)
+        .eq('id', currentEditingExpense.id)
 
       if (updateError) {
         setError(updateError.message)
@@ -336,7 +340,7 @@ export default function ExpensesPage() {
       const { error: deleteError } = await supabase
         .from('expense_allocations')
         .delete()
-        .eq('expense_id', editingExpense.id)
+        .eq('expense_id', currentEditingExpense.id)
 
       if (deleteError) {
         setError(deleteError.message)
@@ -344,7 +348,7 @@ export default function ExpensesPage() {
         return
       }
 
-      expenseId = editingExpense.id
+      expenseId = currentEditingExpense.id
     } else {
       // ── INSERT new expense ─────────────────────────────
       const { data: expenseData, error: insertError } = await supabase
