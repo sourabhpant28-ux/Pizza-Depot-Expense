@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { Expense, MONTHS } from '@/lib/types'
+import { MONTHS } from '@/lib/types'
 import { Store, TrendingUp, CalendarDays, AlertCircle } from 'lucide-react'
 
 // Force fresh data on every request — prevents Netlify static caching
@@ -10,13 +10,7 @@ export const dynamic = 'force-dynamic'
 const fmt = (amount: number) =>
   `$${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
 
-const allocationBadge: Record<string, { label: string; className: string }> = {
-  equal_all:      { label: 'Equal – All',      className: 'bg-blue-100 text-blue-700'    },
-  equal_selected: { label: 'Equal – Selected', className: 'bg-purple-100 text-purple-700' },
-  manual:         { label: 'Manual',           className: 'bg-amber-100 text-amber-700'   },
-}
-
-// ─── Stat Card ──────────────────────────────────────────────
+// ─── Reusable UI components ──────────────────────────────────
 
 function StatCard({
   label,
@@ -31,18 +25,44 @@ function StatCard({
 }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex items-center gap-4">
-      <div className={`p-3 rounded-lg ${iconClass}`}>
+      <div className={`p-3 rounded-lg shrink-0 ${iconClass}`}>
         <Icon size={20} />
       </div>
-      <div>
-        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</p>
-        <p className="text-2xl font-bold text-gray-900 mt-0.5">{value}</p>
+      <div className="min-w-0">
+        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide truncate">{label}</p>
+        <p className="text-2xl font-bold text-gray-900 mt-0.5 truncate">{value}</p>
       </div>
     </div>
   )
 }
 
-// ─── Error Banner ────────────────────────────────────────────
+function Card({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col">
+      <div className="px-6 py-4 border-b border-gray-100">
+        <h3 className="text-base font-semibold text-gray-800">{title}</h3>
+      </div>
+      <div className="px-6 py-5 flex-1">{children}</div>
+    </div>
+  )
+}
+
+function Bar({ pct, className }: { pct: number; className: string }) {
+  return (
+    <div className="w-full bg-gray-100 rounded-full h-2 mt-1">
+      <div
+        className={`h-2 rounded-full ${className}`}
+        style={{ width: `${Math.max(pct, 2)}%` }}
+      />
+    </div>
+  )
+}
 
 function ErrorBanner({ message }: { message: string }) {
   return (
@@ -59,24 +79,36 @@ export default async function DashboardPage() {
   const currentYear  = new Date().getFullYear()
   const currentMonth = new Date().getMonth() + 1
 
-  // Fetch stores
-  const { data: stores, error: storesError } = await supabase
-    .from('stores')
-    .select('*')
-    .order('name')
-    .limit(1000)
+  // ── Fetch all data in parallel ────────────────────────────
+  const [storesRes, expensesRes, allocationsRes] = await Promise.all([
+    supabase
+      .from('stores')
+      .select('*')
+      .order('name')
+      .limit(1000),
 
-  // Fetch all expenses for the current year
-  const { data: expenses, error: expensesError } = await supabase
-    .from('expenses')
-    .select('*')
-    .eq('year', currentYear)
-    .order('created_at', { ascending: false })
+    supabase
+      .from('expenses')
+      .select('*')
+      .eq('year', currentYear)
+      .limit(1000),
 
-  const storeList   = stores   ?? []
-  const expenseList = expenses ?? []
+    supabase
+      .from('expense_allocations')
+      .select(`
+        allocated_amount,
+        store_id,
+        expenses ( year ),
+        stores ( id, name )
+      `)
+      .limit(10000),
+  ])
 
-  // ── Derived stats ─────────────────────────────────────────
+  const storeList      = storesRes.data      ?? []
+  const expenseList    = expensesRes.data     ?? []
+  const allocationList = allocationsRes.data  ?? []
+
+  // ── Stat card values ──────────────────────────────────────
   const totalStores    = storeList.length
   const activeStores   = storeList.filter((s) => s.active).length
   const ytdSpend       = expenseList.reduce((sum, e) => sum + Number(e.total_amount), 0)
@@ -84,27 +116,87 @@ export default async function DashboardPage() {
     .filter((e) => e.month === currentMonth)
     .reduce((sum, e) => sum + Number(e.total_amount), 0)
 
-  const recent: Expense[] = expenseList.slice(0, 10)
+  // ── Spend by Category ─────────────────────────────────────
+  const categoryMap: Record<string, number> = {}
+  for (const e of expenseList) {
+    const cat = e.category ?? 'Uncategorised'
+    categoryMap[cat] = (categoryMap[cat] ?? 0) + Number(e.total_amount)
+  }
+  const categoryData = Object.entries(categoryMap)
+    .map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total)
+  const maxCategory = categoryData[0]?.total ?? 1
 
+  // ── Monthly Spend ─────────────────────────────────────────
+  const monthlyMap: Record<number, number> = {}
+  for (const e of expenseList) {
+    monthlyMap[e.month] = (monthlyMap[e.month] ?? 0) + Number(e.total_amount)
+  }
+  const monthlyData = Array.from({ length: currentMonth }, (_, i) => ({
+    month: i + 1,
+    label: MONTHS[i],
+    total: monthlyMap[i + 1] ?? 0,
+  }))
+  const maxMonthly = Math.max(...monthlyData.map((m) => m.total), 1)
+
+  // ── Top 5 Stores by Allocated Spend ───────────────────────
+  // Filter allocations to current year only (via joined expense year)
+  const storeAllocMap: Record<string, { name: string; total: number }> = {}
+  for (const alloc of allocationList) {
+    const expYear = (alloc.expenses as unknown as { year: number } | null)?.year
+    if (expYear !== currentYear) continue
+    const store = alloc.stores as unknown as { id: string; name: string } | null
+    if (!store) continue
+    if (!storeAllocMap[store.id]) {
+      storeAllocMap[store.id] = { name: store.name, total: 0 }
+    }
+    storeAllocMap[store.id].total += Number(alloc.allocated_amount)
+  }
+  const top5Stores = Object.values(storeAllocMap)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5)
+
+  // ── Allocation Mode Breakdown ─────────────────────────────
+  const modeCount: Record<string, number> = {
+    equal_all: 0,
+    equal_selected: 0,
+    manual: 0,
+  }
+  for (const e of expenseList) {
+    if (e.allocation_mode in modeCount) {
+      modeCount[e.allocation_mode]++
+    }
+  }
+  const totalExpenses = expenseList.length
+  const modeData = [
+    { key: 'equal_all',      label: 'Equal – All',      color: 'bg-blue-500',   light: 'bg-blue-100 text-blue-700'   },
+    { key: 'equal_selected', label: 'Equal – Selected', color: 'bg-purple-500', light: 'bg-purple-100 text-purple-700' },
+    { key: 'manual',         label: 'Manual',           color: 'bg-amber-500',  light: 'bg-amber-100 text-amber-700'  },
+  ]
+
+  // ─── Render ──────────────────────────────────────────────
   return (
-    <div className="p-8">
+    <div className="p-6 md:p-8 space-y-6">
 
-      {/* Page header */}
-      <div className="mb-8">
+      {/* ── Header ────────────────────────────────────────── */}
+      <div>
         <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
         <p className="text-sm text-gray-500 mt-1">Overview for {currentYear}</p>
       </div>
 
-      {/* Error banners */}
-      {storesError && (
-        <ErrorBanner message={`Failed to load stores: ${storesError.message}`} />
+      {/* ── Error banners ─────────────────────────────────── */}
+      {storesRes.error && (
+        <ErrorBanner message={`Failed to load stores: ${storesRes.error.message}`} />
       )}
-      {expensesError && (
-        <ErrorBanner message={`Failed to load expenses: ${expensesError.message}`} />
+      {expensesRes.error && (
+        <ErrorBanner message={`Failed to load expenses: ${expensesRes.error.message}`} />
+      )}
+      {allocationsRes.error && (
+        <ErrorBanner message={`Failed to load allocations: ${allocationsRes.error.message}`} />
       )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-10">
+      {/* ── Stat cards ────────────────────────────────────── */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
           label="Total Stores"
           value={totalStores}
@@ -124,82 +216,150 @@ export default async function DashboardPage() {
           iconClass="bg-indigo-100 text-indigo-600"
         />
         <StatCard
-          label="This Month Spend"
+          label="This Month"
           value={fmt(thisMonthSpend)}
           icon={CalendarDays}
           iconClass="bg-amber-100 text-amber-600"
         />
       </div>
 
-      {/* Recent expenses table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-        <div className="px-6 py-4 border-b border-gray-100">
-          <h3 className="text-base font-semibold text-gray-800">Recent Expenses</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Latest 10 expenses for {currentYear}</p>
-        </div>
+      {/* ── Second row: Category + Monthly ────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                <th className="px-6 py-3 text-left font-medium">Title</th>
-                <th className="px-6 py-3 text-left font-medium">Category</th>
-                <th className="px-6 py-3 text-left font-medium">Period</th>
-                <th className="px-6 py-3 text-right font-medium">Amount</th>
-                <th className="px-6 py-3 text-left font-medium">Allocation Mode</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {recent.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
-                    {expensesError
-                      ? 'Could not load expenses.'
-                      : `No expenses recorded for ${currentYear} yet.`}
-                  </td>
-                </tr>
-              ) : (
-                recent.map((expense) => {
-                  const badge = allocationBadge[expense.allocation_mode] ?? {
-                    label: expense.allocation_mode,
-                    className: 'bg-gray-100 text-gray-600',
-                  }
+        {/* Spend by Category */}
+        <Card title="Spend by Category">
+          {categoryData.length === 0 ? (
+            <p className="text-sm text-gray-400">No expenses recorded yet.</p>
+          ) : (
+            <ul className="space-y-4">
+              {categoryData.map(({ name, total }) => (
+                <li key={name}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700 font-medium truncate pr-2">{name}</span>
+                    <span className="text-gray-900 font-semibold shrink-0">{fmt(total)}</span>
+                  </div>
+                  <Bar pct={(total / maxCategory) * 100} className="bg-indigo-500" />
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        {/* Monthly Spend */}
+        <Card title="Monthly Spend">
+          {monthlyData.length === 0 ? (
+            <p className="text-sm text-gray-400">No expenses recorded yet.</p>
+          ) : (
+            <ul className="space-y-3">
+              {monthlyData.map(({ month, label, total }) => {
+                const isCurrent = month === currentMonth
+                return (
+                  <li key={month}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className={`font-medium truncate pr-2 ${isCurrent ? 'text-indigo-600' : 'text-gray-600'}`}>
+                        {label}
+                        {isCurrent && (
+                          <span className="ml-1.5 text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full font-medium">
+                            Current
+                          </span>
+                        )}
+                      </span>
+                      <span className={`shrink-0 font-semibold ${isCurrent ? 'text-indigo-700' : 'text-gray-900'}`}>
+                        {total > 0 ? fmt(total) : '—'}
+                      </span>
+                    </div>
+                    <Bar
+                      pct={total > 0 ? (total / maxMonthly) * 100 : 0}
+                      className={isCurrent ? 'bg-indigo-500' : 'bg-gray-400'}
+                    />
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Card>
+
+      </div>
+
+      {/* ── Bottom row: Top Stores + Mode Breakdown ───────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Top 5 Stores by Allocated Spend */}
+        <Card title="Top 5 Stores by Allocated Spend">
+          {top5Stores.length === 0 ? (
+            <p className="text-sm text-gray-400">No allocations recorded yet.</p>
+          ) : (
+            <ul className="space-y-3">
+              {top5Stores.map(({ name, total }, i) => (
+                <li key={name} className="flex items-center gap-4">
+                  <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                    i === 0 ? 'bg-indigo-600 text-white' :
+                    i === 1 ? 'bg-indigo-100 text-indigo-700' :
+                    i === 2 ? 'bg-gray-200 text-gray-600' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 text-sm text-gray-800 font-medium truncate">{name}</span>
+                  <span className="text-sm font-semibold text-gray-900 shrink-0">{fmt(total)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        {/* Allocation Mode Breakdown */}
+        <Card title="Allocation Mode Breakdown">
+          {totalExpenses === 0 ? (
+            <p className="text-sm text-gray-400">No expenses recorded yet.</p>
+          ) : (
+            <div className="space-y-5">
+              {/* Stacked bar */}
+              <div className="flex h-4 rounded-full overflow-hidden gap-0.5">
+                {modeData.map(({ key, color }) => {
+                  const count = modeCount[key] ?? 0
+                  const pct   = totalExpenses > 0 ? (count / totalExpenses) * 100 : 0
+                  return pct > 0 ? (
+                    <div
+                      key={key}
+                      className={`${color} transition-all`}
+                      style={{ width: `${pct}%` }}
+                      title={`${pct.toFixed(1)}%`}
+                    />
+                  ) : null
+                })}
+              </div>
+
+              {/* Legend */}
+              <ul className="space-y-3">
+                {modeData.map(({ key, label, light }) => {
+                  const count = modeCount[key] ?? 0
+                  const pct   = totalExpenses > 0 ? (count / totalExpenses) * 100 : 0
                   return (
-                    <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 font-medium text-gray-900">
-                        {expense.title}
-                      </td>
-                      <td className="px-6 py-4 text-gray-500">
-                        {expense.category ?? '—'}
-                      </td>
-                      <td className="px-6 py-4 text-gray-500">
-                        {MONTHS[expense.month - 1]} {expense.year}
-                      </td>
-                      <td className="px-6 py-4 text-right font-semibold text-gray-900">
-                        {fmt(Number(expense.total_amount))}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.className}`}
-                        >
-                          {badge.label}
+                    <li key={key} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${light}`}>
+                          {label}
                         </span>
-                      </td>
-                    </tr>
+                      </div>
+                      <div className="flex items-center gap-3 text-sm">
+                        <span className="text-gray-500">{count} expense{count !== 1 ? 's' : ''}</span>
+                        <span className="font-semibold text-gray-900 w-12 text-right">
+                          {pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </li>
                   )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                })}
+              </ul>
 
-        {recent.length > 0 && (
-          <div className="px-6 py-3 border-t border-gray-100">
-            <p className="text-xs text-gray-400">
-              Showing {recent.length} of {expenseList.length} expense{expenseList.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-        )}
+              <p className="text-xs text-gray-400 pt-1 border-t border-gray-100">
+                {totalExpenses} total expense{totalExpenses !== 1 ? 's' : ''} in {currentYear}
+              </p>
+            </div>
+          )}
+        </Card>
+
       </div>
 
     </div>
