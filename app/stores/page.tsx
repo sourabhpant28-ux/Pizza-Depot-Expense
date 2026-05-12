@@ -24,12 +24,13 @@ type StoreRow = {
 const PROVINCES = ['Ontario', 'Alberta', 'Saskatchewan', 'Manitoba']
 
 const CLUSTERS = [
-  { code: 'BRAM', name: 'Brampton'     },
-  { code: 'GTA',  name: 'GTA'          },
-  { code: 'WIND', name: 'Windsor'      },
-  { code: 'WNPG', name: 'Winnipeg'     },
-  { code: 'SKWN', name: 'Saskatchewan' },
-  { code: 'CALG', name: 'Calgary'      },
+  { code: 'BRAM', name: 'Brampton'      },
+  { code: 'GTA',  name: 'GTA'           },
+  { code: 'WIND', name: 'Windsor'       },
+  { code: 'WNPG', name: 'Winnipeg'      },
+  { code: 'SKWN', name: 'Saskatchewan'  },
+  { code: 'CALG', name: 'Calgary'       },
+  { code: 'WILL', name: 'William Lake'  },
 ]
 
 // Maps province → default cluster (for Ontario we don't auto-fill — too many clusters)

@@ -18,6 +18,7 @@ const CLUSTERS = [
   { code: 'WNPG', label: 'Winnipeg'     },
   { code: 'SKWN', label: 'Saskatchewan' },
   { code: 'CALG', label: 'Calgary'      },
+  { code: 'WILL', label: 'William Lake' },
 ] as const
 
 type AllocationMode = 'equal_all' | 'equal_selected' | 'manual' | 'by_cluster'
