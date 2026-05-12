@@ -69,8 +69,8 @@ const stores = [
   { name: "Chatham Pizza Depot",                           store_code: "CHTM37",    city: "Chatham",         province: "Ontario",      cluster_name: "GTA",          cluster_code: "GTA"  },
   { name: "Wyandotte St Pizza Depot 1 - Windsor",          store_code: "WYND38",    city: "Windsor",         province: "Ontario",      cluster_name: "Windsor",      cluster_code: "WIND" },
   { name: "Provincial Pizza Depot 2 - Windsor",            store_code: "PRVN39",    city: "Windsor",         province: "Ontario",      cluster_name: "Windsor",      cluster_code: "WIND" },
-  { name: "Tecumseh Rd Pizza Depot 3 - Windsor",           store_code: "TCMH40",    city: "Windsor",         province: "Ontario",      cluster_name: "Windsor",      cluster_code: "WIND" },
-  { name: "Howard Pizza Depot 4 - Windsor",                store_code: "HWRD41",    city: "Windsor",         province: "Ontario",      cluster_name: "Windsor",      cluster_code: "WIND" },
+  { name: "Tecumseh Rd Pizza Depot 3 - WINDSOR",           store_code: "TCMH40",    city: "Windsor",         province: "Ontario",      cluster_name: "Windsor",      cluster_code: "WIND" },
+  { name: "Howard Pizza Depot 4 - WINDSOR",                store_code: "HWRD41",    city: "Windsor",         province: "Ontario",      cluster_name: "Windsor",      cluster_code: "WIND" },
   { name: "Kitchener Pizza Depot",                         store_code: "KITCHENER", city: "Kitchener",       province: "Ontario",      cluster_name: "GTA",          cluster_code: "GTA"  },
   { name: "Sarnia Pizza Depot",                            store_code: "SRN42",     city: "Sarnia",          province: "Ontario",      cluster_name: "GTA",          cluster_code: "GTA"  },
   { name: "EDMONTON Pizza Depot",                          store_code: "EDM01",     city: "Edmonton",        province: "Alberta",      cluster_name: "Calgary",      cluster_code: "CALG" },
@@ -83,7 +83,7 @@ const stores = [
   { name: "Molson Pizza Depot",                            store_code: "MOL01",     city: "Winnipeg",        province: "Manitoba",     cluster_name: "Winnipeg",     cluster_code: "WNPG" },
   { name: "Main St Pizza Depot",                           store_code: "MNST02",    city: "Winnipeg",        province: "Manitoba",     cluster_name: "Winnipeg",     cluster_code: "WNPG" },
   { name: "Mandalay Pizza Depot",                          store_code: "MND03",     city: "Winnipeg",        province: "Manitoba",     cluster_name: "Winnipeg",     cluster_code: "WNPG" },
-  { name: "Roblin Pizza Depot - Charleswood",              store_code: "ROB04",     city: "Winnipeg",        province: "Manitoba",     cluster_name: "Winnipeg",     cluster_code: "WNPG" },
+  { name: "Roblin Pizza Depot -Charleswood",               store_code: "ROB04",     city: "Winnipeg",        province: "Manitoba",     cluster_name: "Winnipeg",     cluster_code: "WNPG" },
   { name: "Pembina Pizza Depot",                           store_code: "PMBN05",    city: "Winnipeg",        province: "Manitoba",     cluster_name: "Winnipeg",     cluster_code: "WNPG" },
 ]
 
