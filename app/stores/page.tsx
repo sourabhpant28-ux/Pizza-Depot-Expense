@@ -21,7 +21,7 @@ type StoreRow = {
 
 // ─── Constants ───────────────────────────────────────────────
 
-const PROVINCES = ['Ontario', 'Alberta', 'Saskatchewan', 'Manitoba']
+const PROVINCES = ['Ontario', 'Alberta', 'Saskatchewan', 'Manitoba', 'British Columbia']
 
 const CLUSTERS = [
   { code: 'BRAM', name: 'Brampton'      },
