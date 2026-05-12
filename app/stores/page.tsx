@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
-import { PlusCircle, X, Filter } from 'lucide-react'
+import { PlusCircle, X, Filter, Pencil, Check } from 'lucide-react'
 
 // ─── Extended Store type (includes new columns) ──────────────
 
@@ -24,18 +24,28 @@ type StoreRow = {
 const PROVINCES = ['Ontario', 'Alberta', 'Saskatchewan', 'Manitoba']
 
 const CLUSTERS = [
-  { code: 'BRAM', label: 'Brampton (BRAM)' },
-  { code: 'GTA',  label: 'GTA'             },
-  { code: 'WIND', label: 'Windsor (WIND)'  },
-  { code: 'WNPG', label: 'Winnipeg (WNPG)' },
-  { code: 'SKWN', label: 'Saskatchewan (SKWN)' },
-  { code: 'CALG', label: 'Calgary (CALG)'  },
+  { code: 'BRAM', name: 'Brampton'     },
+  { code: 'GTA',  name: 'GTA'          },
+  { code: 'WIND', name: 'Windsor'      },
+  { code: 'WNPG', name: 'Winnipeg'     },
+  { code: 'SKWN', name: 'Saskatchewan' },
+  { code: 'CALG', name: 'Calgary'      },
 ]
+
+// Maps province → default cluster (for Ontario we don't auto-fill — too many clusters)
+const PROVINCE_CLUSTER: Record<string, { name: string; code: string }> = {
+  Manitoba:     { name: 'Winnipeg',     code: 'WNPG' },
+  Saskatchewan: { name: 'Saskatchewan', code: 'SKWN' },
+  Alberta:      { name: 'Calgary',      code: 'CALG' },
+}
 
 // ─── Helpers ─────────────────────────────────────────────────
 
 const inputClass =
   'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent'
+
+const editInputClass =
+  'w-full border border-amber-200 bg-white rounded-md px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent'
 
 function Field({
   label,
@@ -53,6 +63,12 @@ function Field({
       </label>
       {children}
     </div>
+  )
+}
+
+function EditLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label className="block text-xs font-medium text-amber-700 mb-1">{children}</label>
   )
 }
 
@@ -82,7 +98,7 @@ export default function StoresPage() {
   const [filterProvince, setFilterProvince] = useState('')
   const [filterCluster, setFilterCluster]   = useState('')
 
-  // ── Form fields ───────────────────────────────────────────
+  // ── Add-form fields (f* prefix) ───────────────────────────
   const [fName,        setFName]        = useState('')
   const [fStoreCode,   setFStoreCode]   = useState('')
   const [fCity,        setFCity]        = useState('')
@@ -90,6 +106,18 @@ export default function StoresPage() {
   const [fClusterName, setFClusterName] = useState('')
   const [fClusterCode, setFClusterCode] = useState('')
   const [fLocation,    setFLocation]    = useState('')
+
+  // ── Inline-edit state (e* prefix) ────────────────────────
+  const [editingId,   setEditingId]   = useState<string | null>(null)
+  const [editSaving,  setEditSaving]  = useState(false)
+  const [editError,   setEditError]   = useState<string | null>(null)
+  const [eName,        setEName]        = useState('')
+  const [eStoreCode,   setEStoreCode]   = useState('')
+  const [eCity,        setECity]        = useState('')
+  const [eProvince,    setEProvince]    = useState('')
+  const [eClusterName, setEClusterName] = useState('')
+  const [eClusterCode, setEClusterCode] = useState('')
+  const [eLocation,    setELocation]    = useState('')
 
   // ── Fetch ─────────────────────────────────────────────────
   const fetchStores = async () => {
@@ -116,8 +144,8 @@ export default function StoresPage() {
     })
   }, [stores, filterProvince, filterCluster])
 
-  // ── Form helpers ──────────────────────────────────────────
-  const resetForm = () => {
+  // ── Add-form helpers ──────────────────────────────────────
+  const resetAddForm = () => {
     setFName('')
     setFStoreCode('')
     setFCity('')
@@ -128,35 +156,31 @@ export default function StoresPage() {
     setError(null)
   }
 
-  const handleCancel = () => {
-    resetForm()
+  const handleAddCancel = () => {
+    resetAddForm()
     setShowForm(false)
   }
 
-  // Auto-fill location when city + province change
-  const handleCityChange = (val: string) => {
+  const handleAddCityChange = (val: string) => {
     setFCity(val)
     setFLocation(val && fProvince ? `${val}, ${fProvince}` : val)
   }
-  const handleProvinceChange = (val: string) => {
+  const handleAddProvinceChange = (val: string) => {
     setFProvince(val)
     setFLocation(fCity && val ? `${fCity}, ${val}` : val)
-    // Auto-fill cluster from province if not already set
-    if (!fClusterCode) {
-      const map: Record<string, { name: string; code: string }> = {
-        Manitoba:     { name: 'Winnipeg',     code: 'WNPG' },
-        Saskatchewan: { name: 'Saskatchewan', code: 'SKWN' },
-        Alberta:      { name: 'Calgary',      code: 'CALG' },
-      }
-      if (map[val]) {
-        setFClusterName(map[val].name)
-        setFClusterCode(map[val].code)
-      }
+    if (!fClusterCode && PROVINCE_CLUSTER[val]) {
+      setFClusterName(PROVINCE_CLUSTER[val].name)
+      setFClusterCode(PROVINCE_CLUSTER[val].code)
     }
   }
+  const handleAddClusterChange = (code: string) => {
+    const match = CLUSTERS.find((c) => c.code === code)
+    setFClusterCode(code)
+    setFClusterName(match?.name ?? '')
+  }
 
-  // ── Save ──────────────────────────────────────────────────
-  const handleSave = async (e: React.FormEvent) => {
+  // ── Add-form save ─────────────────────────────────────────
+  const handleAddSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!fName.trim()) return
 
@@ -177,12 +201,85 @@ export default function StoresPage() {
     if (error) {
       setError(error.message)
     } else {
-      resetForm()
+      resetAddForm()
       setShowForm(false)
       await fetchStores()
     }
 
     setSaving(false)
+  }
+
+  // ── Inline-edit helpers ───────────────────────────────────
+
+  /** Open the inline edit form for a row, closing any previously open one. */
+  const handleEditOpen = (store: StoreRow) => {
+    // Toggle off if already editing this row
+    if (editingId === store.id) {
+      setEditingId(null)
+      setEditError(null)
+      return
+    }
+    setEditingId(store.id)
+    setEditError(null)
+    setEName(store.name)
+    setEStoreCode(store.store_code ?? '')
+    setECity(store.city ?? '')
+    setEProvince(store.province ?? '')
+    setEClusterName(store.cluster_name ?? '')
+    setEClusterCode(store.cluster_code ?? '')
+    setELocation(store.location ?? '')
+  }
+
+  const handleEditCancel = () => {
+    setEditingId(null)
+    setEditError(null)
+  }
+
+  const handleEditCityChange = (val: string) => {
+    setECity(val)
+    setELocation(val && eProvince ? `${val}, ${eProvince}` : val)
+  }
+  const handleEditProvinceChange = (val: string) => {
+    setEProvince(val)
+    setELocation(eCity && val ? `${eCity}, ${val}` : val)
+  }
+  const handleEditClusterChange = (code: string) => {
+    const match = CLUSTERS.find((c) => c.code === code)
+    setEClusterCode(code)
+    setEClusterName(match?.name ?? '')
+  }
+
+  /** Save inline edit to Supabase. */
+  const handleEditSave = async (storeId: string) => {
+    if (!eName.trim()) {
+      setEditError('Store name is required.')
+      return
+    }
+
+    setEditSaving(true)
+    setEditError(null)
+
+    const { error } = await supabase
+      .from('stores')
+      .update({
+        name:         eName.trim(),
+        store_code:   eStoreCode.trim()   || null,
+        city:         eCity.trim()        || null,
+        province:     eProvince           || null,
+        cluster_name: eClusterName.trim() || null,
+        cluster_code: eClusterCode.trim() || null,
+        location:     eLocation.trim()    || null,
+      })
+      .eq('id', storeId)
+
+    if (error) {
+      setEditError(error.message)
+    } else {
+      setEditingId(null)
+      await fetchStores()
+    }
+
+    setEditSaving(false)
   }
 
   // ── Toggle active ─────────────────────────────────────────
@@ -212,7 +309,7 @@ export default function StoresPage() {
           <p className="text-sm text-gray-500 mt-1">Manage your store locations</p>
         </div>
         <button
-          onClick={() => { resetForm(); setShowForm((v) => !v) }}
+          onClick={() => { resetAddForm(); setShowForm((v) => !v) }}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
         >
           <PlusCircle size={16} />
@@ -220,7 +317,7 @@ export default function StoresPage() {
         </button>
       </div>
 
-      {/* Error banner */}
+      {/* Global error banner */}
       {error && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
           {error}
@@ -232,13 +329,12 @@ export default function StoresPage() {
         <div className="mb-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-base font-semibold text-gray-800">New Store</h3>
-            <button onClick={handleCancel} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <button onClick={handleAddCancel} className="text-gray-400 hover:text-gray-600 transition-colors">
               <X size={18} />
             </button>
           </div>
 
-          <form onSubmit={handleSave} className="space-y-4">
-            {/* Row 1: Name + Code */}
+          <form onSubmit={handleAddSave} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Store Name" required>
                 <input
@@ -261,13 +357,12 @@ export default function StoresPage() {
               </Field>
             </div>
 
-            {/* Row 2: City + Province */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="City">
                 <input
                   type="text"
                   value={fCity}
-                  onChange={(e) => handleCityChange(e.target.value)}
+                  onChange={(e) => handleAddCityChange(e.target.value)}
                   placeholder="e.g. Brampton"
                   className={inputClass}
                 />
@@ -275,7 +370,7 @@ export default function StoresPage() {
               <Field label="Province">
                 <select
                   value={fProvince}
-                  onChange={(e) => handleProvinceChange(e.target.value)}
+                  onChange={(e) => handleAddProvinceChange(e.target.value)}
                   className={inputClass}
                 >
                   <option value="">— Select Province —</option>
@@ -286,32 +381,40 @@ export default function StoresPage() {
               </Field>
             </div>
 
-            {/* Row 3: Cluster Name + Cluster Code */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Cluster Name">
-                <input
-                  type="text"
-                  value={fClusterName}
-                  onChange={(e) => setFClusterName(e.target.value)}
-                  placeholder="e.g. GTA"
-                  className={inputClass}
-                />
-              </Field>
-              <Field label="Cluster Code">
+              <Field label="Cluster">
                 <select
                   value={fClusterCode}
-                  onChange={(e) => setFClusterCode(e.target.value)}
+                  onChange={(e) => handleAddClusterChange(e.target.value)}
                   className={inputClass}
                 >
                   <option value="">— Select Cluster —</option>
                   {CLUSTERS.map((c) => (
-                    <option key={c.code} value={c.code}>{c.label}</option>
+                    <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
                   ))}
                 </select>
               </Field>
+              <Field label="Cluster Code">
+                <input
+                  type="text"
+                  value={fClusterCode}
+                  readOnly
+                  placeholder="Auto-filled from Cluster"
+                  className={`${inputClass} bg-gray-50 text-gray-500 cursor-default`}
+                />
+              </Field>
             </div>
 
-            {/* Row 4: Actions */}
+            <Field label="Location (address)">
+              <input
+                type="text"
+                value={fLocation}
+                onChange={(e) => setFLocation(e.target.value)}
+                placeholder="Auto-filled from City + Province"
+                className={inputClass}
+              />
+            </Field>
+
             <div className="flex items-center gap-3 pt-1">
               <button
                 type="submit"
@@ -322,7 +425,7 @@ export default function StoresPage() {
               </button>
               <button
                 type="button"
-                onClick={handleCancel}
+                onClick={handleAddCancel}
                 className="bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium px-5 py-2 rounded-lg transition-colors"
               >
                 Cancel
@@ -339,7 +442,6 @@ export default function StoresPage() {
           <span className="text-sm font-medium text-gray-600">Filter</span>
         </div>
 
-        {/* Province filter */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-500">Province</label>
           <select
@@ -354,7 +456,6 @@ export default function StoresPage() {
           </select>
         </div>
 
-        {/* Cluster filter */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-500">Cluster</label>
           <select
@@ -364,12 +465,11 @@ export default function StoresPage() {
           >
             <option value="">All Clusters</option>
             {CLUSTERS.map((c) => (
-              <option key={c.code} value={c.code}>{c.label}</option>
+              <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
             ))}
           </select>
         </div>
 
-        {/* Clear filters */}
         {(filterProvince || filterCluster) && (
           <button
             onClick={() => { setFilterProvince(''); setFilterCluster('') }}
@@ -401,7 +501,7 @@ export default function StoresPage() {
                 <th className="px-5 py-3 text-left font-medium">Province</th>
                 <th className="px-5 py-3 text-left font-medium">Cluster</th>
                 <th className="px-5 py-3 text-left font-medium">Status</th>
-                <th className="px-5 py-3 text-right font-medium">Action</th>
+                <th className="px-5 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -420,53 +520,222 @@ export default function StoresPage() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((store) => (
-                  <tr key={store.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-3.5 font-medium text-gray-900 max-w-[220px]">
-                      <span className="block truncate" title={store.name}>{store.name}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {store.store_code ? (
-                        <span className="font-mono text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
-                          {store.store_code}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-gray-600">{store.city ?? '—'}</td>
-                    <td className="px-5 py-3.5 text-gray-600">{store.province ?? '—'}</td>
-                    <td className="px-5 py-3.5">
-                      {store.cluster_name ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
-                          {store.cluster_name}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <StatusBadge active={store.active} />
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <button
-                        onClick={() => handleToggleActive(store)}
-                        disabled={togglingId === store.id}
-                        className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                          store.active
-                            ? 'border-red-200 text-red-600 hover:bg-red-50'
-                            : 'border-green-200 text-green-600 hover:bg-green-50'
-                        }`}
+                filtered.map((store) => {
+                  const isEditing = editingId === store.id
+                  return (
+                    <>
+                      {/* ── Data row ──────────────────────── */}
+                      <tr
+                        key={store.id}
+                        className={`transition-colors ${isEditing ? 'bg-amber-50' : 'hover:bg-gray-50'}`}
                       >
-                        {togglingId === store.id
-                          ? 'Updating…'
-                          : store.active
-                          ? 'Deactivate'
-                          : 'Activate'}
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                        <td className="px-6 py-3.5 font-medium text-gray-900 max-w-[220px]">
+                          <span className="block truncate" title={store.name}>{store.name}</span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          {store.store_code ? (
+                            <span className="font-mono text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+                              {store.store_code}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5 text-gray-600">{store.city ?? '—'}</td>
+                        <td className="px-5 py-3.5 text-gray-600">{store.province ?? '—'}</td>
+                        <td className="px-5 py-3.5">
+                          {store.cluster_name ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+                              {store.cluster_name}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <StatusBadge active={store.active} />
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center justify-end gap-2">
+                            {/* Edit button */}
+                            <button
+                              onClick={() => handleEditOpen(store)}
+                              className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                                isEditing
+                                  ? 'bg-amber-100 border-amber-300 text-amber-700 hover:bg-amber-200'
+                                  : 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'
+                              }`}
+                            >
+                              <Pencil size={11} />
+                              {isEditing ? 'Editing…' : 'Edit'}
+                            </button>
+
+                            {/* Activate / Deactivate button */}
+                            <button
+                              onClick={() => handleToggleActive(store)}
+                              disabled={togglingId === store.id}
+                              className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                store.active
+                                  ? 'border-red-200 text-red-600 hover:bg-red-50'
+                                  : 'border-green-200 text-green-600 hover:bg-green-50'
+                              }`}
+                            >
+                              {togglingId === store.id
+                                ? '…'
+                                : store.active
+                                ? 'Deactivate'
+                                : 'Activate'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* ── Inline edit row ───────────────── */}
+                      {isEditing && (
+                        <tr key={`edit-${store.id}`}>
+                          <td
+                            colSpan={7}
+                            className="px-6 py-5 bg-amber-50 border-t border-amber-100"
+                          >
+                            {/* Edit form */}
+                            <div className="max-w-4xl">
+                              <div className="flex items-center gap-2 mb-4">
+                                <Pencil size={13} className="text-amber-600" />
+                                <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">
+                                  Editing: {store.name}
+                                </span>
+                              </div>
+
+                              {editError && (
+                                <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 text-red-600 text-xs rounded-lg">
+                                  {editError}
+                                </div>
+                              )}
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+
+                                {/* Store Name */}
+                                <div className="lg:col-span-2">
+                                  <EditLabel>Store Name *</EditLabel>
+                                  <input
+                                    type="text"
+                                    value={eName}
+                                    onChange={(e) => setEName(e.target.value)}
+                                    placeholder="Store name"
+                                    className={editInputClass}
+                                  />
+                                </div>
+
+                                {/* Store Code */}
+                                <div>
+                                  <EditLabel>Store Code</EditLabel>
+                                  <input
+                                    type="text"
+                                    value={eStoreCode}
+                                    onChange={(e) => setEStoreCode(e.target.value.toUpperCase())}
+                                    placeholder="e.g. SPDL01"
+                                    className={`${editInputClass} font-mono`}
+                                  />
+                                </div>
+
+                                {/* City */}
+                                <div>
+                                  <EditLabel>City</EditLabel>
+                                  <input
+                                    type="text"
+                                    value={eCity}
+                                    onChange={(e) => handleEditCityChange(e.target.value)}
+                                    placeholder="City"
+                                    className={editInputClass}
+                                  />
+                                </div>
+
+                                {/* Province */}
+                                <div>
+                                  <EditLabel>Province</EditLabel>
+                                  <select
+                                    value={eProvince}
+                                    onChange={(e) => handleEditProvinceChange(e.target.value)}
+                                    className={editInputClass}
+                                  >
+                                    <option value="">— Select —</option>
+                                    {PROVINCES.map((p) => (
+                                      <option key={p} value={p}>{p}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* Cluster (single select → fills both name + code) */}
+                                <div>
+                                  <EditLabel>Cluster</EditLabel>
+                                  <select
+                                    value={eClusterCode}
+                                    onChange={(e) => handleEditClusterChange(e.target.value)}
+                                    className={editInputClass}
+                                  >
+                                    <option value="">— Select —</option>
+                                    {CLUSTERS.map((c) => (
+                                      <option key={c.code} value={c.code}>
+                                        {c.name} ({c.code})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* Cluster Code (read-only, auto-filled) */}
+                                <div>
+                                  <EditLabel>Cluster Code</EditLabel>
+                                  <input
+                                    type="text"
+                                    value={eClusterCode}
+                                    readOnly
+                                    placeholder="Auto-filled"
+                                    className={`${editInputClass} bg-amber-50/80 text-amber-700 font-mono cursor-default`}
+                                  />
+                                </div>
+
+                                {/* Location */}
+                                <div className="sm:col-span-2 lg:col-span-2">
+                                  <EditLabel>Location (address)</EditLabel>
+                                  <input
+                                    type="text"
+                                    value={eLocation}
+                                    onChange={(e) => setELocation(e.target.value)}
+                                    placeholder="Auto-filled from City + Province"
+                                    className={editInputClass}
+                                  />
+                                </div>
+
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditSave(store.id)}
+                                  disabled={editSaving || !eName.trim()}
+                                  className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+                                >
+                                  <Check size={13} />
+                                  {editSaving ? 'Saving…' : 'Save Changes'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleEditCancel}
+                                  disabled={editSaving}
+                                  className="inline-flex items-center gap-1.5 bg-white hover:bg-gray-100 border border-gray-300 text-gray-600 text-xs font-medium px-4 py-2 rounded-lg transition-colors"
+                                >
+                                  <X size={13} />
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  )
+                })
               )}
             </tbody>
           </table>
