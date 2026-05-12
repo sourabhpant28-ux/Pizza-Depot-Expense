@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Store,
   Receipt,
+  Upload,
   BarChart2,
 } from 'lucide-react'
 
@@ -15,6 +16,7 @@ const navLinks = [
   { label: 'Dashboard', href: '/',        icon: LayoutDashboard },
   { label: 'Stores',    href: '/stores',   icon: Store           },
   { label: 'Expenses',  href: '/expenses', icon: Receipt         },
+  { label: 'Import',    href: '/import',   icon: Upload          },
   { label: 'Reports',   href: '/reports',  icon: BarChart2       },
 ]
 
