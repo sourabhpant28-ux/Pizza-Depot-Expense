@@ -11,7 +11,16 @@ const currentYear  = new Date().getFullYear()
 const currentMonth = new Date().getMonth() + 1
 const YEARS        = Array.from({ length: 5 }, (_, i) => currentYear - i)
 
-type AllocationMode = 'equal_all' | 'equal_selected' | 'manual'
+const CLUSTERS = [
+  { code: 'BRAM', label: 'Brampton'     },
+  { code: 'GTA',  label: 'GTA'          },
+  { code: 'WIND', label: 'Windsor'      },
+  { code: 'WNPG', label: 'Winnipeg'     },
+  { code: 'SKWN', label: 'Saskatchewan' },
+  { code: 'CALG', label: 'Calgary'      },
+] as const
+
+type AllocationMode = 'equal_all' | 'equal_selected' | 'manual' | 'by_cluster'
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -22,6 +31,7 @@ const allocationBadge: Record<AllocationMode, { label: string; className: string
   equal_all:      { label: 'Equal – All',      className: 'bg-blue-100 text-blue-700'    },
   equal_selected: { label: 'Equal – Selected', className: 'bg-purple-100 text-purple-700' },
   manual:         { label: 'Manual',           className: 'bg-amber-100 text-amber-700'   },
+  by_cluster:     { label: 'By Cluster',       className: 'bg-teal-100 text-teal-700'     },
 }
 
 // ─── Sub-components ─────────────────────────────────────────
@@ -57,7 +67,7 @@ function FormField({
 const inputClass =
   'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent'
 
-// ─── Store Selector ──────────────────────────────────────────
+// ─── Store Selector (equal_selected / manual) ────────────────
 
 function StoreSelector({
   stores,
@@ -140,6 +150,95 @@ function StoreSelector({
   )
 }
 
+// ─── Cluster Selector (by_cluster) ──────────────────────────
+
+function ClusterSelector({
+  activeStores,
+  selectedClusters,
+  onToggle,
+}: {
+  activeStores: Store[]
+  selectedClusters: Set<string>
+  onToggle: (code: string) => void
+}) {
+  // Count active stores per cluster
+  const countByCluster = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const s of activeStores) {
+      if (s.cluster_code) {
+        counts[s.cluster_code] = (counts[s.cluster_code] ?? 0) + 1
+      }
+    }
+    return counts
+  }, [activeStores])
+
+  // Stores that belong to the selected clusters
+  const includedStores = useMemo(
+    () => activeStores.filter((s) => s.cluster_code && selectedClusters.has(s.cluster_code)),
+    [activeStores, selectedClusters]
+  )
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Cluster toggle rows */}
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        {CLUSTERS.map(({ code, label }) => {
+          const count   = countByCluster[code] ?? 0
+          const checked = selectedClusters.has(code)
+          return (
+            <label
+              key={code}
+              className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-gray-50 last:border-0 transition-colors ${
+                checked ? 'bg-teal-50' : 'hover:bg-gray-50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(code)}
+                className="accent-teal-600 shrink-0"
+              />
+              <span className="flex-1 text-sm font-medium text-gray-800">{label}</span>
+              <span className="text-xs font-mono bg-gray-100 text-gray-500 px-2 py-0.5 rounded">
+                {code}
+              </span>
+              <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${
+                count > 0
+                  ? checked
+                    ? 'bg-teal-100 text-teal-700'
+                    : 'bg-gray-100 text-gray-600'
+                  : 'bg-gray-50 text-gray-400'
+              }`}>
+                {count} store{count !== 1 ? 's' : ''}
+              </span>
+            </label>
+          )
+        })}
+      </div>
+
+      {/* Included stores preview */}
+      {includedStores.length > 0 && (
+        <div className="border border-teal-100 bg-teal-50/50 rounded-lg px-4 py-3">
+          <p className="text-xs font-semibold text-teal-700 uppercase tracking-wide mb-2">
+            {includedStores.length} store{includedStores.length !== 1 ? 's' : ''} included
+          </p>
+          <ul className="space-y-1 max-h-36 overflow-y-auto">
+            {includedStores.map((s) => (
+              <li key={s.id} className="flex items-center gap-2 text-xs text-gray-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0" />
+                <span className="truncate">{s.name}</span>
+                {s.cluster_code && (
+                  <span className="text-gray-400 shrink-0">({s.cluster_code})</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ───────────────────────────────────────────────
 
 export default function ExpensesPage() {
@@ -164,8 +263,9 @@ export default function ExpensesPage() {
   const [allocationMode, setAllocationMode] = useState<AllocationMode>('equal_all')
 
   // ── Allocation state ─────────────────────────────────────
-  const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set())
-  const [manualAmounts, setManualAmounts] = useState<Record<string, string>>({})
+  const [selectedIds, setSelectedIds]           = useState<Set<string>>(new Set())
+  const [manualAmounts, setManualAmounts]       = useState<Record<string, string>>({})
+  const [selectedClusters, setSelectedClusters] = useState<Set<string>>(new Set())
 
   // ── Derived values ───────────────────────────────────────
   const total         = parseFloat(totalAmount) || 0
@@ -180,6 +280,13 @@ export default function ExpensesPage() {
     [manualAmounts, selectedIds]
   )
   const manualBalanced = Math.abs(manualSum - total) < 0.01
+
+  // Stores belonging to the selected clusters
+  const clusterStores = useMemo(
+    () => activeStores.filter((s) => s.cluster_code && selectedClusters.has(s.cluster_code)),
+    [activeStores, selectedClusters]
+  )
+  const clusterPerStore = clusterStores.length > 0 ? total / clusterStores.length : 0
 
   // ── Fetch ────────────────────────────────────────────────
   const fetchExpenses = async () => {
@@ -221,6 +328,7 @@ export default function ExpensesPage() {
     setAllocationMode('equal_all')
     setSelectedIds(new Set())
     setManualAmounts({})
+    setSelectedClusters(new Set())
     setError(null)
   }
 
@@ -243,22 +351,37 @@ export default function ExpensesPage() {
     setAllocationMode(expense.allocation_mode as AllocationMode)
     setSelectedIds(new Set())
     setManualAmounts({})
+    setSelectedClusters(new Set())
 
-    // Pre-load existing allocations for equal_selected and manual modes
-    if (expense.allocation_mode === 'equal_selected' || expense.allocation_mode === 'manual') {
+    // Pre-load existing allocations
+    if (
+      expense.allocation_mode === 'equal_selected' ||
+      expense.allocation_mode === 'manual' ||
+      expense.allocation_mode === 'by_cluster'
+    ) {
       const { data: allocs } = await supabase
         .from('expense_allocations')
         .select('store_id, allocated_amount')
         .eq('expense_id', expense.id)
 
       if (allocs && allocs.length > 0) {
-        setSelectedIds(new Set(allocs.map((a) => a.store_id)))
-        if (expense.allocation_mode === 'manual') {
-          const amounts: Record<string, string> = {}
-          allocs.forEach((a) => {
-            amounts[a.store_id] = String(a.allocated_amount)
+        if (expense.allocation_mode === 'by_cluster') {
+          // Infer which clusters were selected from the allocated store IDs
+          const allocIds = new Set(allocs.map((a) => a.store_id))
+          const clusters = new Set<string>()
+          activeStores.forEach((s) => {
+            if (allocIds.has(s.id) && s.cluster_code) {
+              clusters.add(s.cluster_code)
+            }
           })
-          setManualAmounts(amounts)
+          setSelectedClusters(clusters)
+        } else {
+          setSelectedIds(new Set(allocs.map((a) => a.store_id)))
+          if (expense.allocation_mode === 'manual') {
+            const amounts: Record<string, string> = {}
+            allocs.forEach((a) => { amounts[a.store_id] = String(a.allocated_amount) })
+            setManualAmounts(amounts)
+          }
         }
       }
     }
@@ -275,6 +398,15 @@ export default function ExpensesPage() {
     })
   }
 
+  const toggleCluster = (code: string) => {
+    setSelectedClusters((prev) => {
+      const next = new Set(prev)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  }
+
   const selectAll = () => setSelectedIds(new Set(activeStores.map((s) => s.id)))
   const clearAll  = () => setSelectedIds(new Set())
 
@@ -287,10 +419,11 @@ export default function ExpensesPage() {
     e.preventDefault()
     setError(null)
 
-    // Capture editingExpense immediately — reading state inside async
-    // functions after await calls can return stale values in React
+    // Capture state now — reading state after awaits can return stale values
     const currentEditingExpense = editingExpense
+    const currentClusterStores  = clusterStores
 
+    // Validation
     if (!title.trim()) {
       setError('Title is required.')
       return
@@ -299,9 +432,19 @@ export default function ExpensesPage() {
       setError('Total amount must be greater than 0.')
       return
     }
-    if (allocationMode !== 'equal_all' && selectedIds.size === 0) {
+    if ((allocationMode === 'equal_selected' || allocationMode === 'manual') && selectedIds.size === 0) {
       setError('Please select at least one store.')
       return
+    }
+    if (allocationMode === 'by_cluster') {
+      if (selectedClusters.size === 0) {
+        setError('Please select at least one cluster.')
+        return
+      }
+      if (currentClusterStores.length === 0) {
+        setError('No active stores found in the selected cluster(s).')
+        return
+      }
     }
     if (allocationMode === 'manual' && !manualBalanced) {
       setError(`Manual amounts sum to ${fmt(manualSum)} but total is ${fmt(total)}. They must match.`)
@@ -336,7 +479,7 @@ export default function ExpensesPage() {
         return
       }
 
-      // Delete old allocations
+      // Delete old allocations before re-inserting
       const { error: deleteError } = await supabase
         .from('expense_allocations')
         .delete()
@@ -384,7 +527,15 @@ export default function ExpensesPage() {
         store_id:         s.id,
         allocated_amount: perStoreAmt,
       }))
+    } else if (allocationMode === 'by_cluster') {
+      const perStoreAmt = currentClusterStores.length > 0 ? total / currentClusterStores.length : 0
+      allocations = currentClusterStores.map((s) => ({
+        expense_id:       expenseId,
+        store_id:         s.id,
+        allocated_amount: perStoreAmt,
+      }))
     } else {
+      // manual
       allocations = Array.from(selectedIds).map((id) => ({
         expense_id:       expenseId,
         store_id:         id,
@@ -600,30 +751,34 @@ export default function ExpensesPage() {
                 />
               </FormField>
 
-              {/* Allocation Mode */}
+              {/* ── Allocation Mode ──────────────────────────── */}
               <div>
                 <p className="text-xs font-medium text-gray-600 mb-2">
                   Allocation Mode <span className="text-red-500">*</span>
                 </p>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {(
                     [
-                      { value: 'equal_all',      label: 'Equal — All Stores' },
-                      { value: 'equal_selected', label: 'Equal — Selected'   },
-                      { value: 'manual',         label: 'Manual Per Store'   },
+                      { value: 'equal_all',      label: 'Equal — All Stores'  },
+                      { value: 'equal_selected', label: 'Equal — Selected'    },
+                      { value: 'by_cluster',     label: 'By Cluster'          },
+                      { value: 'manual',         label: 'Manual Per Store'    },
                     ] as const
                   ).map(({ value, label }) => (
                     <button
                       key={value}
                       type="button"
                       onClick={() => {
-                        setAllocationMode(value)
+                        setAllocationMode(value as AllocationMode)
                         setSelectedIds(new Set())
                         setManualAmounts({})
+                        setSelectedClusters(new Set())
                       }}
                       className={`px-3 py-2.5 rounded-lg border text-xs font-medium text-center transition-colors ${
                         allocationMode === value
-                          ? 'bg-indigo-600 border-indigo-600 text-white'
+                          ? value === 'by_cluster'
+                            ? 'bg-teal-600 border-teal-600 text-white'
+                            : 'bg-indigo-600 border-indigo-600 text-white'
                           : 'bg-white border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600'
                       }`}
                     >
@@ -633,7 +788,7 @@ export default function ExpensesPage() {
                 </div>
               </div>
 
-              {/* Equal All preview */}
+              {/* ── Equal All preview ────────────────────────── */}
               {allocationMode === 'equal_all' && (
                 <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-sm text-blue-700">
                   {activeStores.length === 0 ? (
@@ -651,7 +806,7 @@ export default function ExpensesPage() {
                 </div>
               )}
 
-              {/* Equal Selected */}
+              {/* ── Equal Selected ───────────────────────────── */}
               {allocationMode === 'equal_selected' && (
                 <div className="flex flex-col gap-3">
                   <StoreSelector
@@ -673,7 +828,29 @@ export default function ExpensesPage() {
                 </div>
               )}
 
-              {/* Manual */}
+              {/* ── By Cluster ───────────────────────────────── */}
+              {allocationMode === 'by_cluster' && (
+                <div className="flex flex-col gap-3">
+                  <ClusterSelector
+                    activeStores={activeStores}
+                    selectedClusters={selectedClusters}
+                    onToggle={toggleCluster}
+                  />
+                  {clusterStores.length > 0 && total > 0 && (
+                    <div className="bg-teal-50 border border-teal-100 rounded-lg px-4 py-3 text-sm text-teal-700">
+                      <span className="font-semibold">{fmt(clusterPerStore)}</span>
+                      {' per store × '}
+                      <span className="font-semibold">{clusterStores.length}</span>
+                      {' store'}{clusterStores.length !== 1 ? 's' : ''}
+                      {' across '}
+                      <span className="font-semibold">{selectedClusters.size}</span>
+                      {' cluster'}{selectedClusters.size !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Manual ───────────────────────────────────── */}
               {allocationMode === 'manual' && (
                 <div className="flex flex-col gap-3">
                   <StoreSelector

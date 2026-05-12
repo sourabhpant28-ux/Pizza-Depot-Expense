@@ -8,6 +8,12 @@ export type Store = {
   location: string | null
   active: boolean
   created_at: string
+  // Extended columns (added via add-store-columns.sql)
+  store_code:   string | null
+  city:         string | null
+  province:     string | null
+  cluster_name: string | null
+  cluster_code: string | null
 }
 
 export type Expense = {
@@ -18,7 +24,7 @@ export type Expense = {
   total_amount: number
   month: number
   year: number
-  allocation_mode: 'equal_all' | 'equal_selected' | 'manual'
+  allocation_mode: 'equal_all' | 'equal_selected' | 'manual' | 'by_cluster'
   notes: string | null
   created_at: string
 }
