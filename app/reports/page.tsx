@@ -25,10 +25,10 @@ const CLUSTER_OPTIONS = [
 
 type RawAllocation = {
   allocated_amount: number
-  store_id: string
-  expense_id: string
+  store_id:         string
+  expense_id:       string
   stores: {
-    name: string
+    name:         string
     store_code:   string | null
     city:         string | null
     province:     string | null
@@ -37,38 +37,28 @@ type RawAllocation = {
   } | null
   expenses: {
     title:        string
-    category:     string | null
-    vendor:       string | null
     month:        number
     year:         number
-    total_amount: number
   } | null
 }
 
-type ReportRow = {
-  storeId:        string
-  storeName:      string
-  storeCode:      string
-  city:           string
-  province:       string
-  clusterName:    string
-  clusterCode:    string
-  expenseTitle:   string
-  category:       string
-  vendor:         string
-  period:         string
-  month:          number
-  year:           number
-  totalAmount:    number
-  allocatedAmount: number
+// One row per store — dynamic expense buckets + grand total
+type PivotRow = {
+  storeId:     string
+  storeName:   string
+  storeCode:   string
+  city:        string
+  province:    string
+  clusterName: string
+  clusterCode: string
+  byExpense:   Record<string, number>   // expense title → summed allocated $
+  total:       number
 }
 
 // ─── Helpers ────────────────────────────────────────────────
 
 const fmt = (n: number) =>
   `$${n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
-
-const shortMonth = (m: number) => MONTHS[m - 1]?.slice(0, 3) ?? ''
 
 const slugify = (str: string) =>
   str.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
@@ -80,32 +70,28 @@ function buildFilename(
   monthTo:     number | null,
   year:        number
 ): string {
-  const storePart = storeName ? slugify(storeName) : clusterName ? slugify(clusterName) : 'all-stores'
-  const monthPart = monthFrom && monthTo && monthFrom === monthTo
-    ? `-${MONTHS[monthFrom - 1].toLowerCase()}`
-    : monthFrom && monthTo
-    ? `-${MONTHS[monthFrom - 1].toLowerCase()}-to-${MONTHS[monthTo - 1].toLowerCase()}`
-    : monthFrom
-    ? `-from-${MONTHS[monthFrom - 1].toLowerCase()}`
-    : monthTo
-    ? `-to-${MONTHS[monthTo - 1].toLowerCase()}`
-    : ''
+  const storePart = storeName   ? slugify(storeName)
+    : clusterName ? slugify(clusterName)
+    : 'all-stores'
+  const monthPart =
+    monthFrom && monthTo && monthFrom === monthTo
+      ? `-${MONTHS[monthFrom - 1].toLowerCase()}`
+      : monthFrom && monthTo
+      ? `-${MONTHS[monthFrom - 1].toLowerCase()}-to-${MONTHS[monthTo - 1].toLowerCase()}`
+      : monthFrom
+      ? `-from-${MONTHS[monthFrom - 1].toLowerCase()}`
+      : monthTo
+      ? `-to-${MONTHS[monthTo - 1].toLowerCase()}`
+      : ''
   return `report-${storePart}-${year}${monthPart}.csv`
 }
 
-function buildCSV(rows: ReportRow[]): string {
+// Pivot CSV: one row per store, one column per expense title
+function buildCSV(rows: PivotRow[], expenseTitles: string[]): string {
   const headers = [
-    'Store Name',
-    'Store Code',
-    'City',
-    'Province',
-    'Cluster',
-    'Expense Title',
-    'Category',
-    'Vendor',
-    'Period',
-    'Total Expense Amount',
-    'Allocated Amount',
+    'Store Name', 'Store Code', 'City', 'Province', 'Cluster',
+    ...expenseTitles,
+    'Total Spent',
   ]
 
   const escape = (val: string | number) => {
@@ -116,7 +102,7 @@ function buildCSV(rows: ReportRow[]): string {
   }
 
   const lines = [
-    headers.join(','),
+    headers.map(escape).join(','),
     ...rows.map((r) =>
       [
         r.storeName,
@@ -124,12 +110,8 @@ function buildCSV(rows: ReportRow[]): string {
         r.city,
         r.province,
         r.clusterName,
-        r.expenseTitle,
-        r.category,
-        r.vendor,
-        r.period,
-        r.totalAmount.toFixed(2),
-        r.allocatedAmount.toFixed(2),
+        ...expenseTitles.map((t) => (r.byExpense[t] ?? 0).toFixed(2)),
+        r.total.toFixed(2),
       ]
         .map(escape)
         .join(',')
@@ -149,7 +131,7 @@ function downloadCSV(content: string, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-// ─── Paginated fetch — bypasses the default 1000-row cap ─────
+// ─── Paginated fetch — bypasses the 1000-row cap ─────────────
 
 async function fetchAllAllocations(): Promise<RawAllocation[]> {
   const allData: RawAllocation[] = []
@@ -163,7 +145,7 @@ async function fetchAllAllocations(): Promise<RawAllocation[]> {
         allocated_amount,
         store_id,
         expense_id,
-        expenses ( title, category, vendor, month, year, total_amount ),
+        expenses ( title, month, year ),
         stores   ( name, store_code, city, province, cluster_name, cluster_code )
       `)
       .order('expense_id', { ascending: true })
@@ -182,7 +164,7 @@ async function fetchAllAllocations(): Promise<RawAllocation[]> {
 // ─── Page ────────────────────────────────────────────────────
 
 export default function ReportsPage() {
-  const [allRows, setAllRows] = useState<ReportRow[]>([])
+  const [allRaw, setAllRaw]   = useState<RawAllocation[]>([])
   const [stores, setStores]   = useState<Store[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
@@ -197,7 +179,7 @@ export default function ReportsPage() {
   // ── Pagination ────────────────────────────────────────────
   const [currentPage, setCurrentPage] = useState(1)
 
-  // ── Fetch ────────────────────────────────────────────────
+  // ── Fetch raw allocations once ───────────────────────────
   const fetchData = async () => {
     setLoading(true)
     setError(null)
@@ -214,28 +196,7 @@ export default function ReportsPage() {
     }
 
     setStores(storeRes.data ?? [])
-
-    const rows: ReportRow[] = rawAllocs
-      .filter((a) => a.stores && a.expenses)
-      .map((a) => ({
-        storeId:         a.store_id,
-        storeName:       a.stores!.name,
-        storeCode:       a.stores!.store_code   ?? '—',
-        city:            a.stores!.city         ?? '—',
-        province:        a.stores!.province     ?? '—',
-        clusterName:     a.stores!.cluster_name ?? '—',
-        clusterCode:     a.stores!.cluster_code ?? '',
-        expenseTitle:    a.expenses!.title,
-        category:        a.expenses!.category   ?? '—',
-        vendor:          a.expenses!.vendor     ?? '—',
-        period:          `${shortMonth(a.expenses!.month)} ${a.expenses!.year}`,
-        month:           a.expenses!.month,
-        year:            a.expenses!.year,
-        totalAmount:     Number(a.expenses!.total_amount),
-        allocatedAmount: Number(a.allocated_amount),
-      }))
-
-    setAllRows(rows)
+    setAllRaw(rawAllocs)
     setLoading(false)
   }
 
@@ -246,30 +207,76 @@ export default function ReportsPage() {
     setCurrentPage(1)
   }, [selectedStoreId, selectedMonthFrom, selectedMonthTo, selectedYear, selectedCluster])
 
-  // ── Client-side filtering (all rows) ─────────────────────
-  const filteredRows = useMemo(() => {
-    return allRows.filter((r) => {
-      if (selectedStoreId   !== 'all' && r.storeId    !== selectedStoreId)   return false
-      if (selectedMonthFrom !== 'all' && r.month      <  selectedMonthFrom)  return false
-      if (selectedMonthTo   !== 'all' && r.month      >  selectedMonthTo)    return false
-      if (r.year !== selectedYear)                                             return false
-      if (selectedCluster   !== 'all' && r.clusterCode !== selectedCluster)  return false
+  // ── Step 1: filter raw allocations ───────────────────────
+  const filteredRaw = useMemo(() => {
+    return allRaw.filter((a) => {
+      if (!a.stores || !a.expenses) return false
+      if (selectedStoreId   !== 'all' && a.store_id                    !== selectedStoreId)   return false
+      if (selectedMonthFrom !== 'all' && a.expenses.month              <  selectedMonthFrom)  return false
+      if (selectedMonthTo   !== 'all' && a.expenses.month              >  selectedMonthTo)    return false
+      if (a.expenses.year !== selectedYear)                                                    return false
+      if (selectedCluster   !== 'all' && a.stores.cluster_code         !== selectedCluster)   return false
       return true
     })
-  }, [allRows, selectedStoreId, selectedMonthFrom, selectedMonthTo, selectedYear, selectedCluster])
+  }, [allRaw, selectedStoreId, selectedMonthFrom, selectedMonthTo, selectedYear, selectedCluster])
 
-  // ── Stats — computed from ALL filtered rows ───────────────
+  // ── Step 2: unique expense titles (sorted A→Z) ───────────
+  const expenseTitles = useMemo(() => {
+    const seen = new Set<string>()
+    for (const a of filteredRaw) {
+      if (a.expenses?.title) seen.add(a.expenses.title)
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b))
+  }, [filteredRaw])
+
+  // ── Step 3: build pivot — one row per store ───────────────
+  const pivotRows = useMemo(() => {
+    const storeMap = new Map<string, PivotRow>()
+
+    for (const a of filteredRaw) {
+      if (!a.stores || !a.expenses) continue
+
+      if (!storeMap.has(a.store_id)) {
+        storeMap.set(a.store_id, {
+          storeId:     a.store_id,
+          storeName:   a.stores.name,
+          storeCode:   a.stores.store_code   ?? '—',
+          city:        a.stores.city         ?? '—',
+          province:    a.stores.province     ?? '—',
+          clusterName: a.stores.cluster_name ?? '—',
+          clusterCode: a.stores.cluster_code ?? '',
+          byExpense:   {},
+          total:       0,
+        })
+      }
+
+      const row   = storeMap.get(a.store_id)!
+      const title = a.expenses.title
+      const amt   = Number(a.allocated_amount)
+
+      row.byExpense[title] = (row.byExpense[title] ?? 0) + amt
+      row.total            += amt
+    }
+
+    return Array.from(storeMap.values())
+      .sort((a, b) => a.storeName.localeCompare(b.storeName))
+  }, [filteredRaw])
+
+  // ── Stats ─────────────────────────────────────────────────
   const totalAllocated = useMemo(
-    () => filteredRows.reduce((sum, r) => sum + r.allocatedAmount, 0),
-    [filteredRows]
+    () => pivotRows.reduce((sum, r) => sum + r.total, 0),
+    [pivotRows]
   )
 
-  // ── Pagination calculations ───────────────────────────────
-  const totalPages  = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
-  const safePage    = Math.min(currentPage, totalPages)
-  const pageStart   = (safePage - 1) * PAGE_SIZE          // 0-indexed
-  const pageEnd     = Math.min(safePage * PAGE_SIZE, filteredRows.length)
-  const pageRows    = filteredRows.slice(pageStart, pageEnd)
+  // ── Pagination ────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(pivotRows.length / PAGE_SIZE))
+  const safePage   = Math.min(currentPage, totalPages)
+  const pageStart  = (safePage - 1) * PAGE_SIZE
+  const pageEnd    = Math.min(safePage * PAGE_SIZE, pivotRows.length)
+  const pageRows   = pivotRows.slice(pageStart, pageEnd)
+
+  // Total fixed + dynamic + total col
+  const totalCols  = 5 + expenseTitles.length + 1
 
   // ── CSV filename ─────────────────────────────────────────
   const csvFilename = useMemo(() => {
@@ -284,10 +291,10 @@ export default function ReportsPage() {
     )
   }, [selectedStoreId, selectedCluster, selectedMonthFrom, selectedMonthTo, selectedYear, stores])
 
-  // ── Download — ALL filtered rows, not just current page ──
+  // ── Download — ALL pivot rows (not just current page) ────
   const handleDownload = () => {
-    if (filteredRows.length === 0) return
-    downloadCSV(buildCSV(filteredRows), csvFilename)
+    if (pivotRows.length === 0) return
+    downloadCSV(buildCSV(pivotRows, expenseTitles), csvFilename)
   }
 
   // ─── Render ──────────────────────────────────────────────
@@ -298,7 +305,7 @@ export default function ReportsPage() {
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Reports</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Filter and export expense allocation data
+          One row per store — columns show spend per expense, with a grand total
         </p>
       </div>
 
@@ -343,9 +350,7 @@ export default function ReportsPage() {
             >
               <option value="all">All Clusters</option>
               {CLUSTER_OPTIONS.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.name} ({c.code})
-                </option>
+                <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
               ))}
             </select>
           </div>
@@ -398,7 +403,7 @@ export default function ReportsPage() {
             </select>
           </div>
 
-          {/* Clear filters */}
+          {/* Clear */}
           {(selectedStoreId !== 'all' || selectedCluster !== 'all' || selectedMonthFrom !== 'all' || selectedMonthTo !== 'all' || selectedYear !== currentYear) && (
             <button
               onClick={() => {
@@ -413,7 +418,6 @@ export default function ReportsPage() {
               Clear filters
             </button>
           )}
-
         </div>
       </div>
 
@@ -421,9 +425,9 @@ export default function ReportsPage() {
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
         <div className="flex items-center gap-6">
           <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Total Rows</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Total Stores</p>
             <p className="text-2xl font-bold text-gray-900">
-              {loading ? '—' : filteredRows.length.toLocaleString()}
+              {loading ? '—' : pivotRows.length.toLocaleString()}
             </p>
           </div>
           <div className="w-px h-10 bg-gray-200" />
@@ -433,35 +437,46 @@ export default function ReportsPage() {
               {loading ? '—' : fmt(totalAllocated)}
             </p>
           </div>
+          {!loading && expenseTitles.length > 0 && (
+            <>
+              <div className="w-px h-10 bg-gray-200" />
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Expense Types</p>
+                <p className="text-2xl font-bold text-gray-900">{expenseTitles.length}</p>
+              </div>
+            </>
+          )}
         </div>
 
         <button
           onClick={handleDownload}
-          disabled={filteredRows.length === 0 || loading}
+          disabled={pivotRows.length === 0 || loading}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
         >
           <Download size={16} />
-          Download CSV ({filteredRows.length.toLocaleString()} rows)
+          Download CSV ({pivotRows.length.toLocaleString()} stores)
         </button>
       </div>
 
-      {/* Filename preview */}
-      {filteredRows.length > 0 && (
+      {/* Filename */}
+      {pivotRows.length > 0 && (
         <p className="text-xs text-gray-400 mb-4">
           File: <span className="font-mono text-gray-600">{csvFilename}</span>
         </p>
       )}
 
-      {/* ── Preview table ──────────────────────────────────── */}
+      {/* ── Pivot table ────────────────────────────────────── */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
 
         {/* Table header bar */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-800">Preview</h3>
-          {!loading && filteredRows.length > 0 && (
+          <h3 className="text-base font-semibold text-gray-800">
+            Store Spend Summary
+          </h3>
+          {!loading && pivotRows.length > 0 && (
             <span className="text-xs text-gray-400">
               Showing {(pageStart + 1).toLocaleString()}–{pageEnd.toLocaleString()} of{' '}
-              {filteredRows.length.toLocaleString()} rows
+              {pivotRows.length.toLocaleString()} stores
             </span>
           )}
         </div>
@@ -470,65 +485,100 @@ export default function ReportsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Store Name</th>
+                {/* Fixed columns */}
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap sticky left-0 bg-gray-50 z-10">
+                  Store Name
+                </th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Code</th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">City</th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Province</th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Cluster</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Expense Title</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Category</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Vendor</th>
-                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">Period</th>
-                <th className="px-4 py-3 text-right font-medium whitespace-nowrap">Total Expense</th>
-                <th className="px-4 py-3 text-right font-medium whitespace-nowrap">Allocated</th>
+
+                {/* Dynamic expense columns */}
+                {expenseTitles.map((title) => (
+                  <th
+                    key={title}
+                    className="px-4 py-3 text-right font-medium max-w-[140px]"
+                    title={title}
+                  >
+                    <span className="block truncate">{title}</span>
+                  </th>
+                ))}
+
+                {/* Grand total */}
+                <th className="px-4 py-3 text-right font-medium whitespace-nowrap bg-indigo-50 text-indigo-700">
+                  Total Spent
+                </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={totalCols} className="px-6 py-12 text-center text-gray-400">
                     Loading data…
                   </td>
                 </tr>
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan={totalCols} className="px-6 py-12 text-center text-gray-400">
                     No data found for the selected filters.
                   </td>
                 </tr>
               ) : (
-                pageRows.map((row, i) => (
-                  <tr key={i} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 font-medium text-gray-900 max-w-[180px]">
-                      <span className="block truncate" title={row.storeName}>{row.storeName}</span>
+                pageRows.map((row) => (
+                  <tr key={row.storeId} className="hover:bg-gray-50 transition-colors">
+                    {/* Store Name — sticky */}
+                    <td className="px-4 py-3 font-medium text-gray-900 max-w-[200px] sticky left-0 bg-white hover:bg-gray-50">
+                      <span className="block truncate" title={row.storeName}>
+                        {row.storeName}
+                      </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded whitespace-nowrap">
+
+                    {/* Store Code */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="font-mono text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
                         {row.storeCode}
                       </span>
                     </td>
+
+                    {/* City */}
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{row.city}</td>
+
+                    {/* Province */}
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{row.province}</td>
-                    <td className="px-4 py-3">
+
+                    {/* Cluster */}
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {row.clusterName !== '—' ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 whitespace-nowrap">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
                           {row.clusterName}
                         </span>
                       ) : (
                         <span className="text-gray-400">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-700 max-w-[180px]">
-                      <span className="block truncate" title={row.expenseTitle}>{row.expenseTitle}</span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{row.category}</td>
-                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{row.vendor}</td>
-                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{row.period}</td>
-                    <td className="px-4 py-3 text-right text-gray-700 whitespace-nowrap">
-                      {fmt(row.totalAmount)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold text-gray-900 whitespace-nowrap">
-                      {fmt(row.allocatedAmount)}
+
+                    {/* Dynamic expense amount cells */}
+                    {expenseTitles.map((title) => {
+                      const amt = row.byExpense[title]
+                      return (
+                        <td
+                          key={title}
+                          className="px-4 py-3 text-right whitespace-nowrap"
+                        >
+                          {amt != null && amt > 0 ? (
+                            <span className="text-gray-700">{fmt(amt)}</span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      )
+                    })}
+
+                    {/* Total Spent */}
+                    <td className="px-4 py-3 text-right whitespace-nowrap font-bold text-gray-900 bg-indigo-50/50">
+                      {fmt(row.total)}
                     </td>
                   </tr>
                 ))
@@ -537,8 +587,8 @@ export default function ReportsPage() {
           </table>
         </div>
 
-        {/* ── Pagination bar ─────────────────────────────── */}
-        {!loading && filteredRows.length > PAGE_SIZE && (
+        {/* ── Pagination ─────────────────────────────────── */}
+        {!loading && pivotRows.length > PAGE_SIZE && (
           <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-4">
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
