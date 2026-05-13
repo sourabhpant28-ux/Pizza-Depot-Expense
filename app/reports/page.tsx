@@ -76,11 +76,20 @@ const slugify = (str: string) =>
 function buildFilename(
   storeName:   string | null,
   clusterName: string | null,
-  month:       number | null,
+  monthFrom:   number | null,
+  monthTo:     number | null,
   year:        number
 ): string {
-  const storePart   = storeName   ? slugify(storeName)   : clusterName ? slugify(clusterName) : 'all-stores'
-  const monthPart   = month       ? `-${MONTHS[month - 1].toLowerCase()}` : ''
+  const storePart = storeName ? slugify(storeName) : clusterName ? slugify(clusterName) : 'all-stores'
+  const monthPart = monthFrom && monthTo && monthFrom === monthTo
+    ? `-${MONTHS[monthFrom - 1].toLowerCase()}`
+    : monthFrom && monthTo
+    ? `-${MONTHS[monthFrom - 1].toLowerCase()}-to-${MONTHS[monthTo - 1].toLowerCase()}`
+    : monthFrom
+    ? `-from-${MONTHS[monthFrom - 1].toLowerCase()}`
+    : monthTo
+    ? `-to-${MONTHS[monthTo - 1].toLowerCase()}`
+    : ''
   return `report-${storePart}-${year}${monthPart}.csv`
 }
 
@@ -179,10 +188,11 @@ export default function ReportsPage() {
   const [error, setError]     = useState<string | null>(null)
 
   // ── Filters ───────────────────────────────────────────────
-  const [selectedStoreId, setSelectedStoreId]   = useState<string>('all')
-  const [selectedMonth,   setSelectedMonth]     = useState<number | 'all'>('all')
-  const [selectedYear,    setSelectedYear]      = useState<number>(currentYear)
-  const [selectedCluster, setSelectedCluster]   = useState<string>('all')
+  const [selectedStoreId,   setSelectedStoreId]   = useState<string>('all')
+  const [selectedMonthFrom, setSelectedMonthFrom] = useState<number | 'all'>('all')
+  const [selectedMonthTo,   setSelectedMonthTo]   = useState<number | 'all'>('all')
+  const [selectedYear,      setSelectedYear]      = useState<number>(currentYear)
+  const [selectedCluster,   setSelectedCluster]   = useState<string>('all')
 
   // ── Pagination ────────────────────────────────────────────
   const [currentPage, setCurrentPage] = useState(1)
@@ -234,18 +244,19 @@ export default function ReportsPage() {
   // Reset to page 1 whenever any filter changes
   useEffect(() => {
     setCurrentPage(1)
-  }, [selectedStoreId, selectedMonth, selectedYear, selectedCluster])
+  }, [selectedStoreId, selectedMonthFrom, selectedMonthTo, selectedYear, selectedCluster])
 
   // ── Client-side filtering (all rows) ─────────────────────
   const filteredRows = useMemo(() => {
     return allRows.filter((r) => {
-      if (selectedStoreId !== 'all' && r.storeId   !== selectedStoreId)  return false
-      if (selectedMonth   !== 'all' && r.month     !== selectedMonth)    return false
-      if (r.year !== selectedYear)                                         return false
-      if (selectedCluster !== 'all' && r.clusterCode !== selectedCluster) return false
+      if (selectedStoreId   !== 'all' && r.storeId    !== selectedStoreId)   return false
+      if (selectedMonthFrom !== 'all' && r.month      <  selectedMonthFrom)  return false
+      if (selectedMonthTo   !== 'all' && r.month      >  selectedMonthTo)    return false
+      if (r.year !== selectedYear)                                             return false
+      if (selectedCluster   !== 'all' && r.clusterCode !== selectedCluster)  return false
       return true
     })
-  }, [allRows, selectedStoreId, selectedMonth, selectedYear, selectedCluster])
+  }, [allRows, selectedStoreId, selectedMonthFrom, selectedMonthTo, selectedYear, selectedCluster])
 
   // ── Stats — computed from ALL filtered rows ───────────────
   const totalAllocated = useMemo(
@@ -267,10 +278,11 @@ export default function ReportsPage() {
     return buildFilename(
       store?.name   ?? null,
       cluster?.name ?? null,
-      selectedMonth === 'all' ? null : selectedMonth,
+      selectedMonthFrom === 'all' ? null : selectedMonthFrom,
+      selectedMonthTo   === 'all' ? null : selectedMonthTo,
       selectedYear
     )
-  }, [selectedStoreId, selectedCluster, selectedMonth, selectedYear, stores])
+  }, [selectedStoreId, selectedCluster, selectedMonthFrom, selectedMonthTo, selectedYear, stores])
 
   // ── Download — ALL filtered rows, not just current page ──
   const handleDownload = () => {
@@ -338,17 +350,34 @@ export default function ReportsPage() {
             </select>
           </div>
 
-          {/* Month */}
+          {/* From Month */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">Month</label>
+            <label className="text-xs font-medium text-gray-500">From Month</label>
             <select
-              value={selectedMonth}
+              value={selectedMonthFrom}
               onChange={(e) =>
-                setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))
+                setSelectedMonthFrom(e.target.value === 'all' ? 'all' : Number(e.target.value))
               }
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[140px]"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[130px]"
             >
-              <option value="all">All Months</option>
+              <option value="all">Any</option>
+              {MONTHS.map((m, i) => (
+                <option key={m} value={i + 1}>{m}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* To Month */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-500">To Month</label>
+            <select
+              value={selectedMonthTo}
+              onChange={(e) =>
+                setSelectedMonthTo(e.target.value === 'all' ? 'all' : Number(e.target.value))
+              }
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[130px]"
+            >
+              <option value="all">Any</option>
               {MONTHS.map((m, i) => (
                 <option key={m} value={i + 1}>{m}</option>
               ))}
@@ -370,12 +399,13 @@ export default function ReportsPage() {
           </div>
 
           {/* Clear filters */}
-          {(selectedStoreId !== 'all' || selectedCluster !== 'all' || selectedMonth !== 'all' || selectedYear !== currentYear) && (
+          {(selectedStoreId !== 'all' || selectedCluster !== 'all' || selectedMonthFrom !== 'all' || selectedMonthTo !== 'all' || selectedYear !== currentYear) && (
             <button
               onClick={() => {
                 setSelectedStoreId('all')
                 setSelectedCluster('all')
-                setSelectedMonth('all')
+                setSelectedMonthFrom('all')
+                setSelectedMonthTo('all')
                 setSelectedYear(currentYear)
               }}
               className="text-xs text-gray-500 hover:text-gray-800 underline self-end pb-2"
