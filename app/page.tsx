@@ -38,7 +38,7 @@ function StatCard({
         {loading ? (
           <div className="h-7 w-20 bg-gray-100 rounded animate-pulse mt-1" />
         ) : (
-          <p className="text-xl sm:text-2xl font-bold text-gray-900 mt-0.5 break-all leading-tight">{value}</p>
+          <p className="text-xl sm:text-2xl font-bold text-gray-900 mt-0.5 leading-tight">{value}</p>
         )}
       </div>
     </div>
@@ -264,7 +264,7 @@ export default function DashboardPage() {
       )}
 
       {/* ── Stat cards ────────────────────────────────────── */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard label="Total Stores"  value={totalStores}         icon={Store}        iconClass="bg-gray-100 text-gray-600"     loading={loading} />
         <StatCard label="Active Stores" value={activeStores}        icon={Store}        iconClass="bg-green-100 text-green-600"   loading={loading} />
         <StatCard label="YTD Spend"     value={fmt(ytdSpend)}       icon={TrendingUp}   iconClass="bg-indigo-100 text-indigo-600" loading={loading} />
