@@ -293,6 +293,11 @@ export default function ExpensesPage() {
 
   const hasActiveFilters = filterTitle !== '' || filterMonth !== 'all' || filterYear !== 'all'
 
+  const filteredTotal = useMemo(
+    () => filteredExpenses.reduce((sum, e) => sum + Number(e.total_amount), 0),
+    [filteredExpenses]
+  )
+
   const clearFilters = () => {
     setFilterTitle('')
     setFilterMonth('all')
@@ -734,6 +739,23 @@ export default function ExpensesPage() {
                 ))
               )}
             </tbody>
+
+            {/* Totals footer — only when there are rows to sum */}
+            {!loading && filteredExpenses.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-gray-200 bg-gray-50">
+                  <td className="px-6 py-4 text-sm font-semibold text-gray-700" colSpan={3}>
+                    {hasActiveFilters
+                      ? `Total (${filteredExpenses.length} of ${expenses.length} expenses)`
+                      : `Total (${expenses.length} expense${expenses.length !== 1 ? 's' : ''})`}
+                  </td>
+                  <td className="px-6 py-4 text-right text-base font-bold text-gray-900">
+                    {fmt(filteredTotal)}
+                  </td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
