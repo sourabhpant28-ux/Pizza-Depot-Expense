@@ -1,14 +1,17 @@
+'use client'
+
+import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { MONTHS } from '@/lib/types'
 import { Store, TrendingUp, CalendarDays, AlertCircle } from 'lucide-react'
-
-// Force fresh data on every request — prevents Netlify static caching
-export const dynamic = 'force-dynamic'
 
 // ─── Helpers ────────────────────────────────────────────────
 
 const fmt = (amount: number) =>
   `$${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`
+
+const currentYear  = new Date().getFullYear()
+const currentMonth = new Date().getMonth() + 1
 
 // ─── Reusable UI components ──────────────────────────────────
 
@@ -17,11 +20,13 @@ function StatCard({
   value,
   icon: Icon,
   iconClass,
+  loading,
 }: {
   label: string
   value: string | number
   icon: React.ElementType
   iconClass: string
+  loading?: boolean
 }) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex items-center gap-4">
@@ -30,7 +35,11 @@ function StatCard({
       </div>
       <div className="min-w-0">
         <p className="text-xs text-gray-500 font-medium uppercase tracking-wide truncate">{label}</p>
-        <p className="text-2xl font-bold text-gray-900 mt-0.5 truncate">{value}</p>
+        {loading ? (
+          <div className="h-8 w-24 bg-gray-100 rounded animate-pulse mt-1" />
+        ) : (
+          <p className="text-2xl font-bold text-gray-900 mt-0.5 truncate">{value}</p>
+        )}
       </div>
     </div>
   )
@@ -64,113 +73,175 @@ function Bar({ pct, className }: { pct: number; className: string }) {
   )
 }
 
-function ErrorBanner({ message }: { message: string }) {
+function SkeletonBar() {
   return (
-    <div className="mb-6 flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
-      <AlertCircle size={16} className="shrink-0 mt-0.5" />
-      <span>{message}</span>
-    </div>
+    <div className="w-full bg-gray-100 rounded-full h-2 mt-1 animate-pulse" />
   )
+}
+
+// ─── Types ───────────────────────────────────────────────────
+
+type StoreRow = { id: string; name: string; active: boolean }
+type ExpenseRow = {
+  id: string
+  total_amount: number
+  month: number
+  year: number
+  category: string | null
+  allocation_mode: string
+}
+type AllocRow = {
+  allocated_amount: number
+  store_id: string
+  expenses: { year: number } | null
+  stores: { id: string; name: string } | null
 }
 
 // ─── Page ───────────────────────────────────────────────────
 
-export default async function DashboardPage() {
-  const currentYear  = new Date().getFullYear()
-  const currentMonth = new Date().getMonth() + 1
+export default function DashboardPage() {
+  const [stores,      setStores]      = useState<StoreRow[]>([])
+  const [expenses,    setExpenses]    = useState<ExpenseRow[]>([])
+  const [allocations, setAllocations] = useState<AllocRow[]>([])
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState<string | null>(null)
 
-  // ── Fetch all data in parallel ────────────────────────────
-  const [storesRes, expensesRes, allocationsRes] = await Promise.all([
-    supabase
-      .from('stores')
-      .select('*')
-      .order('name')
-      .limit(1000),
+  useEffect(() => {
+    let cancelled = false
 
-    supabase
-      .from('expenses')
-      .select('*')
-      .eq('year', currentYear)
-      .limit(1000),
+    const load = async () => {
+      setLoading(true)
+      setError(null)
 
-    supabase
-      .from('expense_allocations')
-      .select(`
-        allocated_amount,
-        store_id,
-        expenses ( year ),
-        stores ( id, name )
-      `)
-      .limit(10000),
-  ])
+      // Paginate allocations to bypass 1000-row cap
+      const fetchAllAllocations = async (): Promise<AllocRow[]> => {
+        const all: AllocRow[] = []
+        const pageSize = 1000
+        let from = 0
+        while (true) {
+          const { data, error } = await supabase
+            .from('expense_allocations')
+            .select(`allocated_amount, store_id, expenses ( year ), stores ( id, name )`)
+            .range(from, from + pageSize - 1)
+          if (error) throw new Error(error.message)
+          if (!data || data.length === 0) break
+          all.push(...(data as unknown as AllocRow[]))
+          if (data.length < pageSize) break
+          from += pageSize
+        }
+        return all
+      }
 
-  const storeList      = storesRes.data      ?? []
-  const expenseList    = expensesRes.data     ?? []
-  const allocationList = allocationsRes.data  ?? []
+      const [storesRes, expensesRes, allocsResult] = await Promise.allSettled([
+        supabase.from('stores').select('id, name, active').order('name').limit(1000),
+        supabase
+          .from('expenses')
+          .select('id, total_amount, month, year, category, allocation_mode')
+          .eq('year', currentYear)
+          .limit(1000),
+        fetchAllAllocations(),
+      ])
+
+      if (cancelled) return
+
+      if (storesRes.status === 'rejected') {
+        setError(`Failed to load stores: ${storesRes.reason}`)
+      } else if (storesRes.value.error) {
+        setError(`Failed to load stores: ${storesRes.value.error.message}`)
+      } else {
+        setStores((storesRes.value.data ?? []) as StoreRow[])
+      }
+
+      if (expensesRes.status === 'rejected') {
+        setError(`Failed to load expenses: ${expensesRes.reason}`)
+      } else if (expensesRes.value.error) {
+        setError(`Failed to load expenses: ${expensesRes.value.error.message}`)
+      } else {
+        setExpenses((expensesRes.value.data ?? []) as unknown as ExpenseRow[])
+      }
+
+      if (allocsResult.status === 'rejected') {
+        setError(`Failed to load allocations: ${allocsResult.reason}`)
+      } else {
+        setAllocations(allocsResult.value)
+      }
+
+      setLoading(false)
+    }
+
+    load()
+    return () => { cancelled = true }
+  }, [])
 
   // ── Stat card values ──────────────────────────────────────
-  const totalStores    = storeList.length
-  const activeStores   = storeList.filter((s) => s.active).length
-  const ytdSpend       = expenseList.reduce((sum, e) => sum + Number(e.total_amount), 0)
-  const thisMonthSpend = expenseList
+  const totalStores    = stores.length
+  const activeStores   = stores.filter((s) => s.active).length
+  const ytdSpend       = expenses.reduce((sum, e) => sum + Number(e.total_amount), 0)
+  const thisMonthSpend = expenses
     .filter((e) => e.month === currentMonth)
     .reduce((sum, e) => sum + Number(e.total_amount), 0)
 
   // ── Spend by Category ─────────────────────────────────────
-  const categoryMap: Record<string, number> = {}
-  for (const e of expenseList) {
-    const cat = e.category ?? 'Uncategorised'
-    categoryMap[cat] = (categoryMap[cat] ?? 0) + Number(e.total_amount)
-  }
-  const categoryData = Object.entries(categoryMap)
-    .map(([name, total]) => ({ name, total }))
-    .sort((a, b) => b.total - a.total)
+  const categoryData = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const e of expenses) {
+      const cat = e.category ?? 'Uncategorised'
+      map[cat] = (map[cat] ?? 0) + Number(e.total_amount)
+    }
+    return Object.entries(map)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total)
+  }, [expenses])
   const maxCategory = categoryData[0]?.total ?? 1
 
   // ── Monthly Spend ─────────────────────────────────────────
-  const monthlyMap: Record<number, number> = {}
-  for (const e of expenseList) {
-    monthlyMap[e.month] = (monthlyMap[e.month] ?? 0) + Number(e.total_amount)
-  }
-  const monthlyData = Array.from({ length: currentMonth }, (_, i) => ({
-    month: i + 1,
-    label: MONTHS[i],
-    total: monthlyMap[i + 1] ?? 0,
-  }))
+  const monthlyData = useMemo(() => {
+    const map: Record<number, number> = {}
+    for (const e of expenses) {
+      map[e.month] = (map[e.month] ?? 0) + Number(e.total_amount)
+    }
+    return Array.from({ length: currentMonth }, (_, i) => ({
+      month: i + 1,
+      label: MONTHS[i],
+      total: map[i + 1] ?? 0,
+    }))
+  }, [expenses])
   const maxMonthly = Math.max(...monthlyData.map((m) => m.total), 1)
 
   // ── Top 5 Stores by Allocated Spend ───────────────────────
-  // Filter allocations to current year only (via joined expense year)
-  const storeAllocMap: Record<string, { name: string; total: number }> = {}
-  for (const alloc of allocationList) {
-    const expYear = (alloc.expenses as unknown as { year: number } | null)?.year
-    if (expYear !== currentYear) continue
-    const store = alloc.stores as unknown as { id: string; name: string } | null
-    if (!store) continue
-    if (!storeAllocMap[store.id]) {
-      storeAllocMap[store.id] = { name: store.name, total: 0 }
+  const top5Stores = useMemo(() => {
+    const storeAllocMap: Record<string, { name: string; total: number }> = {}
+    for (const alloc of allocations) {
+      const expYear = alloc.expenses?.year
+      if (expYear !== currentYear) continue
+      const store = alloc.stores
+      if (!store) continue
+      if (!storeAllocMap[store.id]) {
+        storeAllocMap[store.id] = { name: store.name, total: 0 }
+      }
+      storeAllocMap[store.id].total += Number(alloc.allocated_amount)
     }
-    storeAllocMap[store.id].total += Number(alloc.allocated_amount)
-  }
-  const top5Stores = Object.values(storeAllocMap)
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 5)
+    return Object.values(storeAllocMap)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5)
+  }, [allocations])
 
   // ── Allocation Mode Breakdown ─────────────────────────────
-  const modeCount: Record<string, number> = {
-    equal_all: 0,
-    equal_selected: 0,
-    manual: 0,
-  }
-  for (const e of expenseList) {
-    if (e.allocation_mode in modeCount) {
-      modeCount[e.allocation_mode]++
+  const modeCount = useMemo(() => {
+    const counts: Record<string, number> = {
+      equal_all: 0, equal_selected: 0, manual: 0, by_cluster: 0,
     }
-  }
-  const totalExpenses = expenseList.length
+    for (const e of expenses) {
+      if (e.allocation_mode in counts) counts[e.allocation_mode]++
+    }
+    return counts
+  }, [expenses])
+  const totalExpenses = expenses.length
+
   const modeData = [
-    { key: 'equal_all',      label: 'Equal – All',      color: 'bg-blue-500',   light: 'bg-blue-100 text-blue-700'   },
+    { key: 'equal_all',      label: 'Equal – All',      color: 'bg-blue-500',   light: 'bg-blue-100 text-blue-700'    },
     { key: 'equal_selected', label: 'Equal – Selected', color: 'bg-purple-500', light: 'bg-purple-100 text-purple-700' },
+    { key: 'by_cluster',     label: 'By Cluster',       color: 'bg-teal-500',   light: 'bg-teal-100 text-teal-700'    },
     { key: 'manual',         label: 'Manual',           color: 'bg-amber-500',  light: 'bg-amber-100 text-amber-700'  },
   ]
 
@@ -184,43 +255,20 @@ export default async function DashboardPage() {
         <p className="text-sm text-gray-500 mt-1">Overview for {currentYear}</p>
       </div>
 
-      {/* ── Error banners ─────────────────────────────────── */}
-      {storesRes.error && (
-        <ErrorBanner message={`Failed to load stores: ${storesRes.error.message}`} />
-      )}
-      {expensesRes.error && (
-        <ErrorBanner message={`Failed to load expenses: ${expensesRes.error.message}`} />
-      )}
-      {allocationsRes.error && (
-        <ErrorBanner message={`Failed to load allocations: ${allocationsRes.error.message}`} />
+      {/* ── Error banner ──────────────────────────────────── */}
+      {error && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+          <AlertCircle size={16} className="shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
       )}
 
       {/* ── Stat cards ────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard
-          label="Total Stores"
-          value={totalStores}
-          icon={Store}
-          iconClass="bg-gray-100 text-gray-600"
-        />
-        <StatCard
-          label="Active Stores"
-          value={activeStores}
-          icon={Store}
-          iconClass="bg-green-100 text-green-600"
-        />
-        <StatCard
-          label="YTD Spend"
-          value={fmt(ytdSpend)}
-          icon={TrendingUp}
-          iconClass="bg-indigo-100 text-indigo-600"
-        />
-        <StatCard
-          label="This Month"
-          value={fmt(thisMonthSpend)}
-          icon={CalendarDays}
-          iconClass="bg-amber-100 text-amber-600"
-        />
+        <StatCard label="Total Stores"  value={totalStores}       icon={Store}        iconClass="bg-gray-100 text-gray-600"   loading={loading} />
+        <StatCard label="Active Stores" value={activeStores}      icon={Store}        iconClass="bg-green-100 text-green-600" loading={loading} />
+        <StatCard label="YTD Spend"     value={fmt(ytdSpend)}     icon={TrendingUp}   iconClass="bg-indigo-100 text-indigo-600" loading={loading} />
+        <StatCard label="This Month"    value={fmt(thisMonthSpend)} icon={CalendarDays} iconClass="bg-amber-100 text-amber-600"  loading={loading} />
       </div>
 
       {/* ── Second row: Category + Monthly ────────────────── */}
@@ -228,7 +276,19 @@ export default async function DashboardPage() {
 
         {/* Spend by Category */}
         <Card title="Spend by Category">
-          {categoryData.length === 0 ? (
+          {loading ? (
+            <ul className="space-y-4">
+              {[1,2,3,4].map((i) => (
+                <li key={i}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="h-4 w-28 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-4 w-16 bg-gray-100 rounded animate-pulse" />
+                  </div>
+                  <SkeletonBar />
+                </li>
+              ))}
+            </ul>
+          ) : categoryData.length === 0 ? (
             <p className="text-sm text-gray-400">No expenses recorded yet.</p>
           ) : (
             <ul className="space-y-4">
@@ -247,7 +307,19 @@ export default async function DashboardPage() {
 
         {/* Monthly Spend */}
         <Card title="Monthly Spend">
-          {monthlyData.length === 0 ? (
+          {loading ? (
+            <ul className="space-y-3">
+              {[1,2,3,4,5].map((i) => (
+                <li key={i}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="h-4 w-20 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-4 w-20 bg-gray-100 rounded animate-pulse" />
+                  </div>
+                  <SkeletonBar />
+                </li>
+              ))}
+            </ul>
+          ) : monthlyData.length === 0 ? (
             <p className="text-sm text-gray-400">No expenses recorded yet.</p>
           ) : (
             <ul className="space-y-3">
@@ -286,7 +358,17 @@ export default async function DashboardPage() {
 
         {/* Top 5 Stores by Allocated Spend */}
         <Card title="Top 5 Stores by Allocated Spend">
-          {top5Stores.length === 0 ? (
+          {loading ? (
+            <ul className="space-y-3">
+              {[1,2,3,4,5].map((i) => (
+                <li key={i} className="flex items-center gap-4">
+                  <div className="w-7 h-7 rounded-full bg-gray-100 animate-pulse shrink-0" />
+                  <div className="flex-1 h-4 bg-gray-100 rounded animate-pulse" />
+                  <div className="w-16 h-4 bg-gray-100 rounded animate-pulse shrink-0" />
+                </li>
+              ))}
+            </ul>
+          ) : top5Stores.length === 0 ? (
             <p className="text-sm text-gray-400">No allocations recorded yet.</p>
           ) : (
             <ul className="space-y-3">
@@ -310,7 +392,19 @@ export default async function DashboardPage() {
 
         {/* Allocation Mode Breakdown */}
         <Card title="Allocation Mode Breakdown">
-          {totalExpenses === 0 ? (
+          {loading ? (
+            <div className="space-y-5">
+              <div className="h-4 w-full bg-gray-100 rounded-full animate-pulse" />
+              <ul className="space-y-3">
+                {[1,2,3].map((i) => (
+                  <li key={i} className="flex items-center justify-between">
+                    <div className="h-5 w-28 bg-gray-100 rounded-full animate-pulse" />
+                    <div className="h-4 w-24 bg-gray-100 rounded animate-pulse" />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : totalExpenses === 0 ? (
             <p className="text-sm text-gray-400">No expenses recorded yet.</p>
           ) : (
             <div className="space-y-5">
@@ -334,7 +428,8 @@ export default async function DashboardPage() {
               <ul className="space-y-3">
                 {modeData.map(({ key, label, light }) => {
                   const count = modeCount[key] ?? 0
-                  const pct   = totalExpenses > 0 ? (count / totalExpenses) * 100 : 0
+                  if (count === 0) return null
+                  const pct = totalExpenses > 0 ? (count / totalExpenses) * 100 : 0
                   return (
                     <li key={key} className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
