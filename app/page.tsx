@@ -29,16 +29,16 @@ function StatCard({
   loading?: boolean
 }) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex items-center gap-4">
-      <div className={`p-3 rounded-lg shrink-0 ${iconClass}`}>
-        <Icon size={20} />
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
+      <div className={`p-2.5 sm:p-3 rounded-lg shrink-0 ${iconClass}`}>
+        <Icon size={18} />
       </div>
       <div className="min-w-0">
-        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide truncate">{label}</p>
+        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide leading-tight">{label}</p>
         {loading ? (
-          <div className="h-8 w-24 bg-gray-100 rounded animate-pulse mt-1" />
+          <div className="h-7 w-20 bg-gray-100 rounded animate-pulse mt-1" />
         ) : (
-          <p className="text-2xl font-bold text-gray-900 mt-0.5 truncate">{value}</p>
+          <p className="text-xl sm:text-2xl font-bold text-gray-900 mt-0.5 break-all leading-tight">{value}</p>
         )}
       </div>
     </div>
@@ -265,10 +265,10 @@ export default function DashboardPage() {
 
       {/* ── Stat cards ────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard label="Total Stores"  value={totalStores}       icon={Store}        iconClass="bg-gray-100 text-gray-600"   loading={loading} />
-        <StatCard label="Active Stores" value={activeStores}      icon={Store}        iconClass="bg-green-100 text-green-600" loading={loading} />
-        <StatCard label="YTD Spend"     value={fmt(ytdSpend)}     icon={TrendingUp}   iconClass="bg-indigo-100 text-indigo-600" loading={loading} />
-        <StatCard label="This Month"    value={fmt(thisMonthSpend)} icon={CalendarDays} iconClass="bg-amber-100 text-amber-600"  loading={loading} />
+        <StatCard label="Total Stores"  value={totalStores}         icon={Store}        iconClass="bg-gray-100 text-gray-600"     loading={loading} />
+        <StatCard label="Active Stores" value={activeStores}        icon={Store}        iconClass="bg-green-100 text-green-600"   loading={loading} />
+        <StatCard label="YTD Spend"     value={fmt(ytdSpend)}       icon={TrendingUp}   iconClass="bg-indigo-100 text-indigo-600" loading={loading} />
+        <StatCard label="This Month"    value={fmt(thisMonthSpend)} icon={CalendarDays} iconClass="bg-amber-100 text-amber-600"   loading={loading} />
       </div>
 
       {/* ── Second row: Category + Monthly ────────────────── */}
