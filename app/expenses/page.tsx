@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Expense, Store, CATEGORIES, MONTHS } from '@/lib/types'
-import { PlusCircle, X, Search, Pencil } from 'lucide-react'
+import { PlusCircle, X, Search, Pencil, SlidersHorizontal } from 'lucide-react'
 
 // ─── Constants ───────────────────────────────────────────────
 
@@ -250,6 +250,11 @@ export default function ExpensesPage() {
   const [saving, setSaving]             = useState(false)
   const [error, setError]               = useState<string | null>(null)
 
+  // ── Table filters ────────────────────────────────────────
+  const [filterTitle, setFilterTitle] = useState('')
+  const [filterMonth, setFilterMonth] = useState<number | 'all'>('all')
+  const [filterYear,  setFilterYear]  = useState<number | 'all'>('all')
+
   // ── Editing ──────────────────────────────────────────────
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
 
@@ -267,6 +272,32 @@ export default function ExpensesPage() {
   const [selectedIds, setSelectedIds]           = useState<Set<string>>(new Set())
   const [manualAmounts, setManualAmounts]       = useState<Record<string, string>>({})
   const [selectedClusters, setSelectedClusters] = useState<Set<string>>(new Set())
+
+  // ── Filter-derived values ────────────────────────────────
+  // Unique years present in the data, newest first
+  const availableYears = useMemo(() => {
+    const years = Array.from(new Set(expenses.map((e) => e.year))).sort((a, b) => b - a)
+    return years
+  }, [expenses])
+
+  // Filtered expense list (client-side, all 3 filters ANDed)
+  const filteredExpenses = useMemo(() => {
+    const q = filterTitle.trim().toLowerCase()
+    return expenses.filter((e) => {
+      if (q && !e.title.toLowerCase().includes(q)) return false
+      if (filterMonth !== 'all' && e.month !== filterMonth) return false
+      if (filterYear  !== 'all' && e.year  !== filterYear)  return false
+      return true
+    })
+  }, [expenses, filterTitle, filterMonth, filterYear])
+
+  const hasActiveFilters = filterTitle !== '' || filterMonth !== 'all' || filterYear !== 'all'
+
+  const clearFilters = () => {
+    setFilterTitle('')
+    setFilterMonth('all')
+    setFilterYear('all')
+  }
 
   // ── Derived values ───────────────────────────────────────
   const total         = parseFloat(totalAmount) || 0
@@ -583,11 +614,73 @@ export default function ExpensesPage() {
         </button>
       </div>
 
+      {/* Filter bar */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-5 py-4 mb-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Icon label */}
+          <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500 shrink-0">
+            <SlidersHorizontal size={14} />
+            Filters
+          </div>
+
+          {/* Search by title */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              value={filterTitle}
+              onChange={(e) => setFilterTitle(e.target.value)}
+              placeholder="Search expenses..."
+              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+          </div>
+
+          {/* Month dropdown */}
+          <select
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+          >
+            <option value="all">All Months</option>
+            {MONTHS.map((m, i) => (
+              <option key={m} value={i + 1}>{m}</option>
+            ))}
+          </select>
+
+          {/* Year dropdown */}
+          <select
+            value={filterYear}
+            onChange={(e) => setFilterYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+          >
+            <option value="all">All Years</option>
+            {availableYears.map((y) => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+
+          {/* Clear filters */}
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-800 border border-gray-300 hover:border-gray-400 px-3 py-2 rounded-lg transition-colors bg-white"
+            >
+              <X size={13} />
+              Clear Filters
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Expenses table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-800">All Expenses</h3>
-          <span className="text-xs text-gray-400">{expenses.length} record{expenses.length !== 1 ? 's' : ''}</span>
+          <span className="text-xs text-gray-400">
+            {hasActiveFilters
+              ? `${filteredExpenses.length} of ${expenses.length} record${expenses.length !== 1 ? 's' : ''}`
+              : `${expenses.length} record${expenses.length !== 1 ? 's' : ''}`}
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -606,14 +699,16 @@ export default function ExpensesPage() {
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-gray-400">Loading expenses…</td>
                 </tr>
-              ) : expenses.length === 0 ? (
+              ) : filteredExpenses.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
-                    No expenses yet. Click &quot;Log Expense&quot; to get started.
+                    {expenses.length === 0
+                      ? 'No expenses yet. Click "Log Expense" to get started.'
+                      : 'No expenses match the current filters.'}
                   </td>
                 </tr>
               ) : (
-                expenses.map((expense) => (
+                filteredExpenses.map((expense) => (
                   <tr key={expense.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 font-medium text-gray-900">{expense.title}</td>
                     <td className="px-6 py-4 text-gray-500">{expense.category ?? '—'}</td>
